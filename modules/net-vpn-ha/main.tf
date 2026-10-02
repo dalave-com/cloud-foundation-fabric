@@ -114,6 +114,8 @@ resource "google_compute_router_peer" "bgp_peer" {
   project                   = local.project_id
   name                      = each.value.bgp_peer.name != null ? each.value.bgp_peer.name : "${var.name}-${each.key}"
   router                    = coalesce(each.value.router, local.router)
+  export_policies           = each.value.bgp_peer.export_policies
+  import_policies           = each.value.bgp_peer.import_policies
   peer_ip_address           = each.value.bgp_peer.address
   peer_asn                  = each.value.bgp_peer.asn
   advertised_route_priority = each.value.bgp_peer.route_priority
@@ -131,6 +133,17 @@ resource "google_compute_router_peer" "bgp_peer" {
       description = range.value
     }
   }
+  dynamic "custom_learned_ip_ranges" {
+    for_each = try(each.value.bgp_peer.custom_learned_ip_ranges.ip_ranges, {})
+    iterator = range
+    content {
+      range = range.value
+    }
+  }
+  custom_learned_route_priority = try(
+    each.value.bgp_peer.custom_learned_ip_ranges.route_priority,
+    null
+  )
   dynamic "md5_authentication_key" {
     for_each = each.value.bgp_peer.md5_authentication_key != null ? toset([each.value.bgp_peer.md5_authentication_key]) : []
     content {
@@ -138,10 +151,12 @@ resource "google_compute_router_peer" "bgp_peer" {
       key  = coalesce(md5_authentication_key.value.key, local.md5_keys[each.key])
     }
   }
-  enable_ipv6               = try(each.value.bgp_peer.ipv6, null) == null ? false : true
-  interface                 = google_compute_router_interface.router_interface[each.key].name
-  ipv6_nexthop_address      = try(each.value.bgp_peer.ipv6.nexthop_address, null)
-  peer_ipv6_nexthop_address = try(each.value.bgp_peer.ipv6.peer_nexthop_address, null)
+  enable_ipv6                        = try(each.value.bgp_peer.ipv6, null) == null ? false : true
+  interface                          = google_compute_router_interface.router_interface[each.key].name
+  ipv6_nexthop_address               = try(each.value.bgp_peer.ipv6.nexthop_address, null)
+  peer_ipv6_nexthop_address          = try(each.value.bgp_peer.ipv6.peer_nexthop_address, null)
+  zero_custom_learned_route_priority = try(each.value.bgp_peer.custom_learned_ip_ranges.route_priority, 1000) == 0 ? true : false
+  depends_on                         = [google_compute_router_route_policy.default]
 }
 
 resource "google_compute_router_interface" "router_interface" {
@@ -177,6 +192,29 @@ resource "google_compute_vpn_tunnel" "tunnels" {
   ike_version           = each.value.ike_version
   shared_secret         = coalesce(each.value.shared_secret, local.secret)
   vpn_gateway           = local.vpn_gateway
+
+  dynamic "cipher_suite" {
+    for_each = each.value.cipher_suite != null ? [each.value.cipher_suite] : []
+    content {
+      dynamic "phase1" {
+        for_each = [cipher_suite.value.phase1]
+        content {
+          dh         = try(phase1.value.dh, null)
+          encryption = try(phase1.value.encryption, null)
+          integrity  = try(phase1.value.integrity, null)
+          prf        = try(phase1.value.prf, null)
+        }
+      }
+      dynamic "phase2" {
+        for_each = [cipher_suite.value.phase2]
+        content {
+          encryption = try(phase2.value.encryption, null)
+          integrity  = try(phase2.value.integrity, null)
+          pfs        = try(phase2.value.pfs, null)
+        }
+      }
+    }
+  }
 }
 
 resource "random_id" "secret" {

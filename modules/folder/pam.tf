@@ -42,9 +42,9 @@ locals {
         require_approver_justification = v.manual_approvals.require_approver_justification
         steps = [
           for s in v.manual_approvals.steps : {
-            approvers                = s.approvers
-            approvals_needed         = try(s.approvals_needed, 1)
-            aprover_email_recipients = try(s.aprover_email_recipients, null)
+            approvers                 = s.approvers
+            approvals_needed          = try(s.approvals_needed, 1)
+            approver_email_recipients = try(s.approver_email_recipients, null)
           }
         ]
       } : null
@@ -70,7 +70,7 @@ resource "google_privileged_access_manager_entitlement" "default" {
 
   eligible_users {
     principals = [
-      for u in each.value.eligible_users : lookup(local.ctx.iam_principals, u, u)
+      for u in each.value.eligible_users : lookup(local.ctx_iam_principals, u, u)
     ]
   }
 
@@ -113,12 +113,19 @@ resource "google_privileged_access_manager_entitlement" "default" {
           content {
             approvers {
               principals = [
-                for a in step.value.approvers : lookup(local.ctx.iam_principals, a, a)
+                for a in step.value.approvers : lookup(local.ctx_iam_principals, a, a)
               ]
             }
 
-            approvals_needed          = step.value.approvals_needed
-            approver_email_recipients = step.value.aprover_email_recipients
+            approvals_needed = step.value.approvals_needed
+            approver_email_recipients = (
+              step.value.approver_email_recipients == null
+              ? null
+              : [
+                for e in step.value.approver_email_recipients :
+                lookup(local.ctx.email_addresses, e, e)
+              ]
+            )
           }
         }
       }
@@ -128,8 +135,22 @@ resource "google_privileged_access_manager_entitlement" "default" {
   dynamic "additional_notification_targets" {
     for_each = each.value.additional_notification_targets == null ? [] : [""]
     content {
-      admin_email_recipients     = each.value.additional_notification_targets.admin_email_recipients
-      requester_email_recipients = each.value.additional_notification_targets.requester_email_recipients
+      admin_email_recipients = (
+        each.value.additional_notification_targets.admin_email_recipients == null
+        ? null
+        : [
+          for e in each.value.additional_notification_targets.admin_email_recipients :
+          lookup(local.ctx.email_addresses, e, e)
+        ]
+      )
+      requester_email_recipients = (
+        each.value.additional_notification_targets.requester_email_recipients == null
+        ? null
+        : [
+          for e in each.value.additional_notification_targets.requester_email_recipients :
+          lookup(local.ctx.email_addresses, e, e)
+        ]
+      )
     }
   }
 

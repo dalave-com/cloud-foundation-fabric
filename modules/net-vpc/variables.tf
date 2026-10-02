@@ -20,6 +20,30 @@ variable "auto_create_subnetworks" {
   default     = false
 }
 
+variable "bgp_config" {
+  description = "Optional BGP path selection configuration."
+  type = object({
+    always_compare_med       = optional(bool)
+    best_path_selection_mode = optional(string)
+    inter_region_cost        = optional(string)
+  })
+  default = null
+  validation {
+    condition = (
+      try(var.bgp_config.best_path_selection_mode, null) == null ||
+      contains(["LEGACY", "STANDARD"], try(var.bgp_config.best_path_selection_mode, ""))
+    )
+    error_message = "best_path_selection_mode must be one of: LEGACY, STANDARD."
+  }
+  validation {
+    condition = (
+      try(var.bgp_config.inter_region_cost, null) == null ||
+      contains(["DEFAULT", "ADD_COST_TO_MED"], try(var.bgp_config.inter_region_cost, ""))
+    )
+    error_message = "inter_region_cost must be one of: DEFAULT, ADD_COST_TO_MED."
+  }
+}
+
 variable "context" {
   description = "Context-specific interpolations."
   type = object({
@@ -94,7 +118,6 @@ variable "firewall_policy_enforcement_order" {
   type        = string
   nullable    = false
   default     = "AFTER_CLASSIC_FIREWALL"
-
   validation {
     condition     = var.firewall_policy_enforcement_order == "BEFORE_CLASSIC_FIREWALL" || var.firewall_policy_enforcement_order == "AFTER_CLASSIC_FIREWALL"
     error_message = "Enforcement order must be BEFORE_CLASSIC_FIREWALL or AFTER_CLASSIC_FIREWALL."
@@ -213,6 +236,7 @@ variable "peering_config" {
 variable "policy_based_routes" {
   description = "Policy based routes, keyed by name."
   type = map(object({
+    name                = optional(string)
     description         = optional(string, "Terraform-managed.")
     labels              = optional(map(string))
     priority            = optional(number)
@@ -268,6 +292,7 @@ variable "psa_configs" {
   type = list(object({
     deletion_policy  = optional(string, null)
     ranges           = map(string)
+    labels           = optional(map(string), {})
     export_routes    = optional(bool, false)
     import_routes    = optional(bool, false)
     peered_domains   = optional(list(string), [])
@@ -297,6 +322,7 @@ variable "psa_configs" {
 variable "routes" {
   description = "Network routes, keyed by name."
   type = map(object({
+    name          = optional(string)
     description   = optional(string, "Terraform-managed.")
     dest_range    = string
     next_hop_type = string # gateway, instance, ip, vpn_tunnel, ilb
@@ -322,6 +348,48 @@ variable "routing_mode" {
   validation {
     condition     = var.routing_mode == "GLOBAL" || var.routing_mode == "REGIONAL"
     error_message = "Routing type must be GLOBAL or REGIONAL."
+  }
+}
+
+variable "service_connection_policies" {
+  description = "Service connection policies, keyed by name."
+  type = map(object({
+    location      = string
+    service_class = string
+    description   = optional(string)
+    labels        = optional(map(string))
+    psc_config = object({
+      subnetworks                = list(string)
+      limit                      = optional(number)
+      producer_instance_location = optional(string)
+      # maps to allowed_google_producers_resource_hierarchy_level
+      nodes = optional(list(string))
+    })
+  }))
+  nullable = false
+  default  = {}
+  validation {
+    condition = alltrue([
+      for k, v in var.service_connection_policies :
+      v.psc_config.producer_instance_location == null || v.psc_config.producer_instance_location == "CUSTOM_RESOURCE_HIERARCHY_LEVELS"
+    ])
+    error_message = "Producer instance location must be null or CUSTOM_RESOURCE_HIERARCHY_LEVELS."
+  }
+  validation {
+    condition = alltrue([
+      for k, v in var.service_connection_policies :
+      v.psc_config.nodes == null || v.psc_config.producer_instance_location == "CUSTOM_RESOURCE_HIERARCHY_LEVELS"
+    ])
+    error_message = "Nodes can only be set if producer instance location is CUSTOM_RESOURCE_HIERARCHY_LEVELS."
+  }
+  validation {
+    condition = alltrue(flatten([
+      for k, v in var.service_connection_policies : [
+        for n in coalesce(v.psc_config.nodes, []) :
+        can(regex("^(projects|folders|organizations)/[a-zA-Z0-9-]+$", n))
+      ]
+    ]))
+    error_message = "Nodes must be in the format 'projects/id', 'folders/id', or 'organizations/id'."
   }
 }
 
@@ -470,6 +538,14 @@ variable "subnets_psc" {
     ip_cidr_range = string
     region        = string
     description   = optional(string)
+    flow_logs_config = optional(object({
+      aggregation_interval = optional(string)
+      filter_expression    = optional(string)
+      flow_sampling        = optional(number)
+      metadata             = optional(string)
+      # only if metadata == "CUSTOM_METADATA"
+      metadata_fields = optional(list(string))
+    }))
 
     iam = optional(map(list(string)), {})
     iam_bindings = optional(map(object({

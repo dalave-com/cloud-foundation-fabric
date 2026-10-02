@@ -10,17 +10,46 @@ context = {
     myrole_one = "organizations/366118655033/roles/myRoleOne"
     myrole_two = "organizations/366118655033/roles/myRoleTwo"
   }
+  email_addresses = {
+    default = "foo@example.com"
+  }
   folder_ids = {
     default = "organizations/1234567890"
+  }
+  kms_keys = {
+    test = "projects/test-kms-0/locations/europe-west8/keyRings/test/cryptoKeys/test"
   }
   iam_principals = {
     mygroup = "group:test-group@example.com"
     mysa    = "serviceAccount:test@test-project.iam.gserviceaccount.com"
     myuser  = "user:test-user@example.com"
   }
+  pubsub_topics = {
+    test = "projects/test-prod-audit-logs-0/topics/audit-logs"
+  }
   tag_values = {
     "test/one" = "tagValues/1234567890"
   }
+  tag_vars = {
+    projects = {
+      "test-00" = {
+        test = "foo-test-0/dynamic_test"
+      }
+    }
+  }
+}
+asset_feeds = {
+  test = {
+    billing_project = "test-project"
+    feed_output_config = {
+      pubsub_destination = {
+        topic = "$pubsub_topics:test"
+      }
+    }
+  }
+}
+contacts = {
+  "$email_addresses:default" = ["ALL"]
 }
 iam = {
   "$custom_roles:myrole_one" = [
@@ -35,6 +64,20 @@ iam_by_principals = {
     "roles/owner",
     "$custom_roles:myrole_one"
   ]
+}
+iam_by_principals_conditional = {
+  "$iam_principals:myuser" = {
+    roles = [
+      "roles/storage.admin",
+      "$custom_roles:myrole_one",
+      "$custom_roles:myrole_two",
+    ]
+    condition = {
+      title       = "expires_after_2020_12_31"
+      description = "Expiring at midnight of 2020-12-31"
+      expression  = "request.time < timestamp(\"2021-01-01T00:00:00Z\")"
+    }
+  }
 }
 iam_bindings = {
   myrole_two = {
@@ -52,6 +95,25 @@ iam_bindings_additive = {
   myrole_two = {
     role   = "$custom_roles:myrole_two"
     member = "$iam_principals:myuser"
+  }
+}
+logging_data_access = {
+  allServices = {
+    ADMIN_READ = {
+      exempted_members = ["$iam_principals:mygroup"]
+    }
+    DATA_READ = {}
+  }
+}
+logging_settings = {
+  kms_key_name = "$kms_keys:test"
+}
+logging_sinks = {
+  test-pubsub = {
+    description = ""
+    destination = "$pubsub_topics:test"
+    filter      = "log_id('cloudaudit.googleapis.com/activity')"
+    type        = "pubsub"
   }
 }
 pam_entitlements = {
@@ -72,5 +134,25 @@ pam_entitlements = {
   }
 }
 tag_bindings = {
-  foo = "$tag_values:test/one"
+  bar = "tagValues/1234567891"
+  baz = "$tag_values:test/one"
+  foo = "$${projects[\"test-00\"].test}/cc-123"
+}
+
+iam_deny_policies = {
+  test-policy = {
+    display_name = "Test Deny Policy"
+    rules = [
+      {
+        description          = "Test Rule"
+        denied_principals    = ["$iam_principals:myuser"]
+        denied_permissions   = ["compute.googleapis.com/instances.create"]
+        exception_principals = ["$iam_principals:mygroup"]
+        denial_condition = {
+          title      = "Test Condition"
+          expression = "resource.matchTag('$${organization.id}/environment', 'development')"
+        }
+      }
+    ]
+  }
 }

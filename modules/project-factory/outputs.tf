@@ -19,10 +19,15 @@ locals {
     for k, v in local.automation_buckets : v.parent_name => k
   }
   _outputs_automation_sas = {
-    for k, v in local.automation_sas : v.parent_name => k...
+    for k, v in local.automation_sas : v.prefix => k...
   }
   outputs_projects = {
     for k, v in local.projects_input : k => {
+      aspect_types = (
+        v.factories_config.aspect_types == null
+        ? {}
+        : module.aspect-types[k].ids
+      )
       automation = {
         bucket = try(
           module.automation-bucket[local._outputs_automation_buckets[k]].name,
@@ -37,12 +42,31 @@ locals {
           }
         }
       }
-      number     = module.projects[k].number
-      project_id = module.projects[k].project_id
+      bigquery_datasets = {
+        for sk, sv in lookup(v, "datasets", {}) :
+        "${k}/${sk}" => (
+          module.bigquery-datasets["${k}/${sk}"].id
+        )
+      }
+      custom_roles = {
+        for sk, sv in module.projects[k].custom_roles :
+        "${k}/${sk}" => (
+          sv.id
+        )
+      }
+      kms_keys = local.projects_kms_keys[k]
+      number   = module.projects[k].number
       log_buckets = {
         for sk, sv in lookup(v, "log_buckets", {}) :
         "${k}/${sk}" => (
           module.log-buckets["${k}/${sk}"].id
+        )
+      }
+      project_id = module.projects[k].project_id
+      pubsub_topics = {
+        for sk, sv in lookup(v, "pubsub_topics", {}) :
+        "${k}/${sk}" => (
+          module.pubsub["${k}/${sk}"].id
         )
       }
       service_accounts = {
@@ -59,6 +83,23 @@ locals {
           module.buckets["${k}/${sk}"].name
         )
       }
+      tag_keys = {
+        for sk, sv in module.projects[k].tag_keys : sk => sv.id
+      }
+      tag_values = {
+        for sk, sv in module.projects[k].tag_values : sk => sv.id
+      }
+      tag_vars = {
+        for sk, sv in module.projects[k].tag_keys : sk => sv.namespaced_name
+        # the provider returns allowed_values_regex set to "" not null
+        if try(sv.allowed_values_regex, "") != ""
+      }
+      workload_identity_pools = (
+        module.projects[k].workload_identity_pool_ids
+      )
+      workload_identity_providers = (
+        module.projects[k].workload_identity_providers
+      )
     }
   }
   outputs_service_accounts = merge(
@@ -75,6 +116,20 @@ locals {
   )
 }
 
+output "bigquery_datasets" {
+  description = "BigQuery dataset ids."
+  value = merge([
+    for k, v in local.outputs_projects : v.bigquery_datasets
+  ]...)
+}
+
+output "custom_roles" {
+  description = "Custom role ids."
+  value = merge([
+    for k, v in local.outputs_projects : v.custom_roles
+  ]...)
+}
+
 output "folder_ids" {
   description = "Folder ids."
   value       = local.folder_ids
@@ -83,6 +138,11 @@ output "folder_ids" {
 output "iam_principals" {
   description = "IAM principals mappings."
   value       = local.iam_principals
+}
+
+output "kms_keys" {
+  description = "KMS key ids."
+  value       = local.kms_keys
 }
 
 output "log_buckets" {
@@ -109,6 +169,13 @@ output "projects" {
   value       = local.outputs_projects
 }
 
+output "pubsub_topics" {
+  description = "PubSub topic ids."
+  value = merge([
+    for k, v in local.outputs_projects : v.pubsub_topics
+  ]...)
+}
+
 output "service_account_emails" {
   description = "Service account emails."
   value = {
@@ -133,6 +200,17 @@ output "service_account_ids" {
 output "service_accounts" {
   description = "Service account emails."
   value       = local.outputs_service_accounts
+}
+
+output "service_agents" {
+  description = "Service agent emails."
+  value = {
+    for k, v in local.projects_service_agents
+    : trimprefix(k, "service_agents/") => {
+      email     = trimprefix(v, "serviceAccount:")
+      iam_email = v
+    }
+  }
 }
 
 output "storage_buckets" {

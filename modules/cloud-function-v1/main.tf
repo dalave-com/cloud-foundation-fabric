@@ -19,7 +19,7 @@ locals {
   ctx = {
     for k, v in var.context : k => {
       for kk, vv in v : "${local._ctx_p}${k}:${kk}" => vv
-    } if k != "condition_vars"
+    } if !endswith(k, "_vars")
   }
   bucket = (
     var.bucket_config == null
@@ -33,7 +33,7 @@ locals {
   location      = lookup(local.ctx.locations, var.region, var.region)
   prefix        = var.prefix == null ? "" : "${var.prefix}-"
   project_id    = lookup(local.ctx.project_ids, var.project_id, var.project_id)
-  vpc_connector = var.vpc_connector.create ? google_vpc_access_connector.connector[0].id : var.vpc_connector.name
+  vpc_connector = var.vpc_connector_create != null ? google_vpc_access_connector.connector[0].id : var.vpc_connector.name
 }
 
 resource "google_cloudfunctions_function" "function" {
@@ -118,6 +118,6 @@ resource "google_cloudfunctions_function_iam_binding" "default" {
   role           = lookup(local.ctx.custom_roles, each.key, each.key)
   members        = [for member in each.value : lookup(local.ctx.iam_principals, member, member)]
   lifecycle {
-    replace_triggered_by = [google_cloudfunctions_function.function]
+    replace_triggered_by = [google_cloudfunctions_function.function.id]
   }
 }

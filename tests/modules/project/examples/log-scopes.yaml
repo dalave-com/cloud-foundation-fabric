@@ -34,7 +34,7 @@ values:
     locked: null
     project: other-project
     retention_days: 30
-  module.project.google_logging_log_scope.log-scopes["scope"]:
+  module.project.google_logging_log_scope.log_scopes["scope"]:
     description: My log scope
     location: global
     name: scope
@@ -66,3 +66,5 @@ counts:
   google_logging_project_bucket_config: 1
   google_project: 1
   google_project_service: 1
+  modules: 2
+  resources: 7

@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,9 +34,13 @@ resource "google_pubsub_schema" "default" {
 }
 
 resource "google_pubsub_topic" "default" {
-  project                    = local.project_id
-  name                       = var.name
-  kms_key_name               = var.kms_key
+  project = local.project_id
+  name    = var.name
+  kms_key_name = (
+    var.kms_key == null
+    ? null
+    : lookup(local.ctx.kms_keys, var.kms_key, var.kms_key)
+  )
   labels                     = var.labels
   message_retention_duration = var.message_retention_duration
   dynamic "message_storage_policy" {
@@ -45,6 +49,7 @@ resource "google_pubsub_topic" "default" {
       allowed_persistence_regions = [
         for v in var.regions : lookup(local.ctx.locations, v, v)
       ]
+      enforce_in_transit = var.message_storage_enforce_in_transit
     }
   }
   dynamic "schema_settings" {
@@ -60,7 +65,7 @@ resource "google_pubsub_subscription" "default" {
   for_each                     = var.subscriptions
   project                      = local.project_id
   name                         = each.key
-  topic                        = google_pubsub_topic.default.name
+  topic                        = google_pubsub_topic.default.id
   labels                       = coalesce(each.value.labels, var.labels)
   ack_deadline_seconds         = each.value.ack_deadline_seconds
   message_retention_duration   = each.value.message_retention_duration
@@ -68,6 +73,7 @@ resource "google_pubsub_subscription" "default" {
   filter                       = each.value.filter
   enable_message_ordering      = each.value.enable_message_ordering
   enable_exactly_once_delivery = each.value.enable_exactly_once_delivery
+  deletion_policy              = each.value.deletion_policy
   dynamic "bigquery_config" {
     for_each = each.value.bigquery == null ? [] : [""]
     content {

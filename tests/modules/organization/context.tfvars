@@ -1,6 +1,12 @@
 context = {
+  access_levels = {
+    test = "accessPolicies/1234567890/accessLevels/test"
+  }
   bigquery_datasets = {
     test = "projects/test-prod-audit-logs-0/datasets/logs"
+  }
+  kms_keys = {
+    test = "projects/test-kms-0/locations/europe-west8/keyRings/test/cryptoKeys/test"
   }
   condition_vars = {
     organization = {
@@ -10,6 +16,9 @@ context = {
   custom_roles = {
     myrole_one = "organizations/366118655033/roles/myRoleOne"
     myrole_two = "organizations/366118655033/roles/myRoleTwo"
+  }
+  email_addresses = {
+    default = "foo@example.com"
   }
   iam_principals = {
     mygroup = "group:test-group@example.com"
@@ -38,12 +47,26 @@ context = {
     "test/one" = "tagValues/1234567890"
   }
 }
+asset_feeds = {
+  test = {
+    billing_project = "test-project"
+    feed_output_config = {
+      pubsub_destination = {
+        topic = "$pubsub_topics:test"
+      }
+    }
+  }
+}
+contacts = {
+  "$email_addresses:default" = ["ALL"]
+}
 iam = {
   "$custom_roles:myrole_one" = [
     "$iam_principals:myuser"
   ]
   "roles/viewer" = [
-    "$iam_principals:mysa"
+    "$iam_principals:mysa",
+    "$iam_principalsets:service_accounts/all"
   ]
 }
 iam_by_principals = {
@@ -51,6 +74,20 @@ iam_by_principals = {
     "roles/owner",
     "$custom_roles:myrole_one"
   ]
+}
+iam_by_principals_conditional = {
+  "$iam_principals:myuser" = {
+    roles = [
+      "roles/storage.admin",
+      "$custom_roles:myrole_one",
+      "$custom_roles:myrole_two"
+    ]
+    condition = {
+      title       = "expires_after_2020_12_31"
+      description = "Expiring at midnight of 2020-12-31"
+      expression  = "request.time < timestamp(\"2021-01-01T00:00:00Z\")"
+    }
+  }
 }
 iam_bindings = {
   myrole_two = {
@@ -70,6 +107,14 @@ iam_bindings_additive = {
     member = "$iam_principals:myuser"
   }
 }
+logging_data_access = {
+  allServices = {
+    ADMIN_READ = {
+      exempted_members = ["$iam_principals:mygroup"]
+    }
+    DATA_READ = {}
+  }
+}
 logging_sinks = {
   test-bq = {
     destination = "$bigquery_datasets:test"
@@ -87,6 +132,7 @@ logging_sinks = {
     type        = "project"
   }
   test-pubsub = {
+    description = ""
     destination = "$pubsub_topics:test"
     filter      = "log_id('cloudaudit.googleapis.com/activity')"
     type        = "pubsub"
@@ -98,6 +144,7 @@ logging_sinks = {
   }
 }
 logging_settings = {
+  kms_key_name     = "$kms_keys:test"
   storage_location = "$locations:default"
 }
 pam_entitlements = {
@@ -106,8 +153,13 @@ pam_entitlements = {
     manual_approvals = {
       require_approver_justification = true
       steps = [{
-        approvers = ["$iam_principals:mygroup"]
+        approvers                 = ["$iam_principals:mygroup"]
+        approver_email_recipients = ["$email_addresses:default"]
       }]
+    }
+    additional_notification_targets = {
+      admin_email_recipients     = ["$email_addresses:default"]
+      requester_email_recipients = ["$email_addresses:default"]
     }
     eligible_users = ["$iam_principals:mygroup"]
     privileged_access = [
@@ -159,4 +211,48 @@ tags = {
       }
     }
   }
+}
+
+iam_deny_policies = {
+  test-policy = {
+    display_name = "Test Deny Policy"
+    rules = [
+      {
+        description          = "Test Rule"
+        denied_principals    = ["$iam_principals:myuser"]
+        denied_permissions   = ["compute.googleapis.com/instances.create"]
+        exception_principals = ["$iam_principals:mygroup"]
+        denial_condition = {
+          title      = "Test Condition"
+          expression = "resource.matchTag('$${organization.id}/environment', 'development')"
+        }
+      }
+    ]
+  }
+}
+
+access_policy = "1234567890"
+
+access_levels = {
+  my_level = {
+    conditions = [{
+      ip_subnetworks = ["10.0.0.0/24"]
+      members        = ["user:test-user@example.com"]
+    }]
+  }
+}
+
+context_aware_access_bindings = {
+  my_binding = {
+    group_key = "$email_addresses:default"
+    access_levels = [
+      "$access_levels:test",
+      "$access_levels:my_level",
+      "$access_levels:factory_level"
+    ]
+  }
+}
+
+factories_config = {
+  access_levels = "factory-caa/access_levels"
 }

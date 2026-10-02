@@ -71,14 +71,19 @@ resource "google_secret_manager_secret" "default" {
       }
     }
   }
-  # dynamic "rotation" {
-  #   for_each = try(each.value.rotation_config, null) == null ? [] : [""]
-  #   content {
-  #     next_rotation_time = each.value.rotation_config.next_time
-  #     rotation_period    = each.value.rotation_config.period
-  #   }
-  # }
-  # topics
+  dynamic "rotation" {
+    for_each = try(each.value.rotation_config, null) == null ? [] : [""]
+    content {
+      next_rotation_time = each.value.rotation_config.next_time
+      rotation_period    = each.value.rotation_config.period
+    }
+  }
+  dynamic "topics" {
+    for_each = coalesce(try(each.value.topics, null), [])
+    content {
+      name = topics.value
+    }
+  }
   lifecycle {
     ignore_changes = [
       rotation[0].next_rotation_time
@@ -95,7 +100,7 @@ resource "google_secret_manager_secret_version" "default" {
   deletion_policy = each.value.deletion_policy
   enabled         = each.value.enabled
   is_secret_data_base64 = try(
-    each.value.data_config.is_base64, null
+    each.value.data_config.is_base64, false
   )
   secret_data_wo_version = try(
     each.value.data_config.write_only_version, null
@@ -127,5 +132,5 @@ resource "google_tags_tag_binding" "binding" {
     local.tag_project,
     google_secret_manager_secret.default[each.value.secret].secret_id
   )
-  tag_value = lookup(local.ctx.tag_values, each.value.tag, each.value.tag)
+  tag_value = templatestring(local._tag_bindings[each.key], var.context.tag_vars)
 }

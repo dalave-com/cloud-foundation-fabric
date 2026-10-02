@@ -1,4 +1,4 @@
-# Copyright 2025 Google LLC
+# Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,15 +19,22 @@ common_tfvars:
 
 tests:
   context:
+  custom_roles:
   iam_by_principals_additive:
+  iam_by_principals_conditional:
   no_parent:
   no_prefix:
-  org_policies_boolean:
-  org_policies_list:
+  org_policies:
+  org_policies_factory:
+    inventory:
+      - org_policies.yaml
+    extra_dirs:
+      - ../../tests/modules/project/factory
   parent_folder:
   parent_org:
   prefix:
   service_encryption_keys:
   service_agents:
+  service_agents_networkservices:
   service_agents_universe:
   universe:

@@ -90,6 +90,9 @@ resource "google_compute_network" "network" {
   network_firewall_policy_enforcement_order = var.firewall_policy_enforcement_order
   enable_ula_internal_ipv6                  = var.ipv6_config.enable_ula_internal
   internal_ipv6_range                       = var.ipv6_config.internal_range
+  bgp_always_compare_med                    = try(var.bgp_config.always_compare_med, null)
+  bgp_best_path_selection_mode              = try(var.bgp_config.best_path_selection_mode, null)
+  bgp_inter_region_cost                     = try(var.bgp_config.inter_region_cost, null)
 }
 
 resource "google_compute_network_peering" "local" {
@@ -181,5 +184,27 @@ resource "google_dns_policy" "default" {
         }
       }
     }
+  }
+}
+
+resource "google_network_connectivity_service_connection_policy" "service_connection_policy" {
+  for_each      = var.service_connection_policies
+  project       = local.project_id
+  name          = each.key
+  network       = local.network.id
+  description   = each.value.description
+  service_class = each.value.service_class
+  labels        = each.value.labels
+  location = lookup(
+    local.ctx.locations, each.value.location, each.value.location
+  )
+  psc_config {
+    subnetworks = [
+      for s in each.value.psc_config.subnetworks :
+      try(local.all_subnets[s].id, s)
+    ]
+    limit                                             = each.value.psc_config.limit
+    producer_instance_location                        = each.value.psc_config.producer_instance_location
+    allowed_google_producers_resource_hierarchy_level = each.value.psc_config.nodes
   }
 }

@@ -46,6 +46,7 @@ These modules are used in the examples included in this repository. If you are u
 ## Networking modules
 
 - [Address reservation](./net-address)
+- [Cloud Armor Security Policy](./net-cloud-armor)
 - [Cloud Endpoints](./endpoints)
 - [DNS](./dns)
 - [DNS Response Policy](./dns-response-policy/)
@@ -60,10 +61,9 @@ These modules are used in the examples included in this repository. If you are u
 - [NAT](./net-cloudnat)
 - [Service Directory](./service-directory)
 - [VPC](./net-vpc)
-- [VPC factory](./net-vpc-factory)
 - [VPC firewall](./net-vpc-firewall)
-- [VPN dynamic](./net-vpn-dynamic)
 - [VPC peering](./net-vpc-peering)
+- [VPN dynamic](./net-vpn-dynamic)
 - [VPN HA](./net-vpn-ha)
 - [VPN static](./net-vpn-static)
 
@@ -105,6 +105,9 @@ These modules are used in the examples included in this repository. If you are u
 ## AI
 
 - [AI Applications](./ai-applications/README.md)
+- [Gemini Enterprise Agent Platform (GEAP) - Agent Gateway](./geap-agent-gateway/README.md)
+- [Gemini Enterprise Agent Platform (GEAP) - Agent Runtime](./geap-agent-runtime/README.md)
+- [Gemini Enterprise Agent Platform (GEAP) - Workbench](./geap-workbench/README.md)
 
 ## Development
 
@@ -132,5 +135,9 @@ These modules are used in the examples included in this repository. If you are u
 
 - [Cloud Functions v1](./cloud-function-v1)
 - [Cloud Functions v2](./cloud-function-v2)
-- [Cloud Run](./cloud-run)
 - [Cloud Run v2](./cloud-run-v2)
+- [Workflows](./workflows)
+
+## Other
+
+- [Backup DR](./backup-dr)

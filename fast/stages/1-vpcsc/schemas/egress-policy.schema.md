@@ -15,7 +15,8 @@
     <br>*enum: ['IDENTITY_TYPE_UNSPECIFIED', 'ANY_IDENTITY', 'ANY_USER_ACCOUNT', 'ANY_SERVICE_ACCOUNT', '']*
   - **identities**: *array*
     - items: *string*
-      <br>*pattern: ^(?:serviceAccount:|user:|group:|principal:|\$identity_sets:)*
+  - **psc_endpoints**: *array*
+    - items: *string*
   - **resources**: *array*
     - items: *string*
 - ⁺**to**: *object*
@@ -36,5 +37,3 @@
     - items: *string*
 
 ## Definitions
-
-

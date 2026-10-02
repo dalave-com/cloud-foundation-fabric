@@ -116,10 +116,23 @@ Perimeters are defined via `perimeters` variable, or the dedicated factory.
 
 Perimeters by default manage all their attributes authoritatively. To have perimeter resources managed externally (e.g. from the project factory) set the perimeter-level attribute `ignore_resource_changes` at the perimeter level.
 
+Perimeter resources and ingress/egress rule resources accept projects (`projects/NUMBER`), [folders](https://cloud.google.com/vpc-service-controls/docs/folder-membership) (`folders/NUMBER`) and organizations (`organizations/NUMBER`). Ingress and egress rules additionally accept [Private Service Connect endpoints](https://cloud.google.com/vpc-service-controls/docs/ingress-egress-rules) as sources, via the `psc_endpoints` attribute which takes forwarding rule names. All of these can be passed as literals, or via the corresponding `context` keys (`project_numbers`, `folder_ids`, `organization_ids`, `psc_endpoints`) as shown below.
+
 ```hcl
 module "test" {
   source        = "./fabric/modules/vpc-sc"
   access_policy = "12345678"
+  context = {
+    folder_ids = {
+      teams = "folders/3333"
+    }
+    organization_ids = {
+      partner = "organizations/4444"
+    }
+    psc_endpoints = {
+      apis = "//compute.googleapis.com/projects/net-0/global/forwardingRules/apis"
+    }
+  }
   access_levels = {
     a1 = {
       conditions = [
@@ -145,7 +158,10 @@ module "test" {
           method_selectors = ["*"]
           service_name     = "storage.googleapis.com"
         }]
-        resources = ["projects/123456789"]
+        resources = [
+          "projects/123456789",
+          "$organization_ids:partner"
+        ]
       }
     }
   }
@@ -157,7 +173,7 @@ module "test" {
           "serviceAccount:test-tf-0@myproject.iam.gserviceaccount.com",
           "serviceAccount:test-tf-1@myproject.iam.gserviceaccount.com"
         ]
-        access_levels = ["*"]
+        access_levels = ["$access_levels:a1"]
       }
       to = {
         operations = [{ service_name = "*" }]
@@ -177,15 +193,32 @@ module "test" {
         roles      = ["roles/storage.objectViewer"]
       }
     }
+    # allow any identity coming in through a specific PSC endpoint
+    psc-apis = {
+      from = {
+        identity_type = "ANY_IDENTITY"
+        psc_endpoints = ["$psc_endpoints:apis"]
+      }
+      to = {
+        operations = [{ service_name = "*" }]
+        resources  = ["*"]
+      }
+    }
   }
   perimeters = {
     r1 = {
       status = {
-        access_levels       = ["a1", "a2"]
-        resources           = ["projects/1111", "projects/2222"]
+        access_levels = ["$access_levels:a1", "$access_levels:a2"]
+        resources = [
+          "projects/1111", "projects/2222", "$folder_ids:teams"
+        ]
         restricted_services = ["storage.googleapis.com"]
-        egress_policies     = ["gcs-sa-foo"]
-        ingress_policies    = ["sa-tf-test", "sa-roles"]
+        egress_policies     = ["$egress_policies:gcs-sa-foo"]
+        ingress_policies = [
+          "$ingress_policies:sa-tf-test",
+          "$ingress_policies:sa-roles",
+          "$ingress_policies:psc-apis"
+        ]
         vpc_accessible_services = {
           allowed_services   = ["storage.googleapis.com"]
           enable_restriction = true
@@ -207,7 +240,7 @@ The caller must have `cloudasset.assets.searchAllResources` permission to perfor
 module "vpc-sc" {
   source                  = "./fabric/modules/vpc-sc"
   project_id_search_scope = var.org_id
-  access_policy = "12345678"
+  access_policy           = "12345678"
   ingress_policies = {
     i1 = {
       from = {
@@ -228,7 +261,7 @@ module "vpc-sc" {
   perimeters = {
     p = {
       spec = {
-        ingress_policies = ["i1"]
+        ingress_policies = ["$ingress_policies:i1"]
         resources        = ["projects/my-destionation-project"]
       }
       use_explicit_dry_run_spec = true
@@ -269,47 +302,47 @@ module "test" {
 description: Main perimeter
 status:
   access_levels:
-    - "geo-it"
-    - "identity-user1"
-  resources:
-    - "projects/1111"
-    - "projects/2222"
-  restricted_services:
-    - "storage.googleapis.com"
-  egress_policies:
-    - "gcs-sa-foo"
-  ingress_policies:
-    - "sa-tf-test-geo"
-    - "sa-tf-test"
-  vpc_accessible_services:
-    allowed_services:
-      - "storage.googleapis.com"
-    enable_restriction: yes
-
-# tftest-file id=p1 path=data/perimeters/perimeter-north.yaml schema=perimeters.schema.json
-```
-
-```yaml
-description: "Main perimeter"
-status:
-  access_levels:
-    - geo-it
-    - identity-user1
+    - $access_levels:geo-it
+    - $access_levels:identity-user1
   resources:
     - projects/1111
     - projects/2222
   restricted_services:
     - storage.googleapis.com
   egress_policies:
-    - gcs-sa-foo
+    - $egress_policies:gcs-sa-foo
   ingress_policies:
-    - sa-tf-test-geo
-    - sa-tf-test
+    - $ingress_policies:sa-tf-test-geo
+    - $ingress_policies:sa-tf-test
+  vpc_accessible_services:
+    allowed_services:
+      - storage.googleapis.com
+    enable_restriction: yes
+
+# tftest-file id=p1 path=data/perimeters/perimeter-north.yaml schema=perimeter.schema.json
+```
+
+```yaml
+description: "Main perimeter"
+status:
+  access_levels:
+    - $access_levels:geo-it
+    - $access_levels:identity-user1
+  resources:
+    - projects/1111
+    - projects/2222
+  restricted_services:
+    - storage.googleapis.com
+  egress_policies:
+    - $egress_policies:gcs-sa-foo
+  ingress_policies:
+    - $ingress_policies:sa-tf-test-geo
+    - $ingress_policies:sa-tf-test
   vpc_accessible_services:
     allowed_services:
       - storage.googleapis.com
     enable_restriction: true
-# tftest-file id=p1 path=data/perimeters/perimeter-north.yaml schema=perimeters.schema.json
+# tftest-file id=p1 path=data/perimeters/perimeter-north.yaml schema=perimeter.schema.json
 ```
 
 ```yaml
@@ -363,7 +396,7 @@ to:
 ```yaml
 from:
   access_levels:
-    - geo-it
+    - $access_levels:geo-it
   identities:
     - serviceAccount:test-tf@myproject.iam.gserviceaccount.com
 to:
@@ -399,18 +432,18 @@ to:
 
 | name | description | type | required | default |
 |---|---|:---:|:---:|:---:|
-| [access_policy](variables.tf#L68) | Access Policy name, set to null if creating one. | <code>string</code> | ✓ |  |
-| [access_levels](variables.tf#L17) | Access level definitions. | <code title="map&#40;object&#40;&#123;&#10;  combining_function &#61; optional&#40;string&#41;&#10;  conditions &#61; optional&#40;list&#40;object&#40;&#123;&#10;    device_policy &#61; optional&#40;object&#40;&#123;&#10;      allowed_device_management_levels &#61; optional&#40;list&#40;string&#41;&#41;&#10;      allowed_encryption_statuses      &#61; optional&#40;list&#40;string&#41;&#41;&#10;      require_admin_approval           &#61; bool&#10;      require_corp_owned               &#61; bool&#10;      require_screen_lock              &#61; optional&#40;bool&#41;&#10;      os_constraints &#61; optional&#40;list&#40;object&#40;&#123;&#10;        os_type                    &#61; string&#10;        minimum_version            &#61; optional&#40;string&#41;&#10;        require_verified_chrome_os &#61; optional&#40;bool&#41;&#10;      &#125;&#41;&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    ip_subnetworks         &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    members                &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    negate                 &#61; optional&#40;bool&#41;&#10;    regions                &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    required_access_levels &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    vpc_subnets            &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;, &#91;&#93;&#41;&#10;  description &#61; optional&#40;string&#41;&#10;  title       &#61; optional&#40;string&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [access_policy_create](variables.tf#L73) | Access Policy configuration, fill in to create. Parent is in 'organizations/123456' format, scopes are in 'folders/456789' or 'projects/project_id' format. | <code title="object&#40;&#123;&#10;  parent &#61; string&#10;  title  &#61; string&#10;  scopes &#61; optional&#40;list&#40;string&#41;, null&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
-| [context](variables.tf#L83) | External context used in replacements. | <code title="object&#40;&#123;&#10;  condition_vars  &#61; optional&#40;map&#40;map&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  iam_principals  &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  identity_sets   &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  project_numbers &#61; optional&#40;map&#40;number&#41;, &#123;&#125;&#41;&#10;  resource_sets   &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  service_sets    &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [egress_policies](variables.tf#L97) | Egress policy definitions that can be referenced in perimeters. | <code title="map&#40;object&#40;&#123;&#10;  title &#61; optional&#40;string&#41;&#10;  from &#61; object&#40;&#123;&#10;    access_levels &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    identity_type &#61; optional&#40;string&#41;&#10;    identities    &#61; optional&#40;list&#40;string&#41;&#41;&#10;    resources     &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#10;  to &#61; object&#40;&#123;&#10;    external_resources &#61; optional&#40;list&#40;string&#41;&#41;&#10;    operations &#61; optional&#40;list&#40;object&#40;&#123;&#10;      method_selectors     &#61; optional&#40;list&#40;string&#41;&#41;&#10;      permission_selectors &#61; optional&#40;list&#40;string&#41;&#41;&#10;      service_name         &#61; string&#10;    &#125;&#41;&#41;, &#91;&#93;&#41;&#10;    resources &#61; optional&#40;list&#40;string&#41;&#41;&#10;    roles     &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [factories_config](variables.tf#L140) | Paths to folders that enable factory functionality. | <code title="object&#40;&#123;&#10;  access_levels    &#61; optional&#40;string&#41;&#10;  egress_policies  &#61; optional&#40;string&#41;&#10;  ingress_policies &#61; optional&#40;string&#41;&#10;  perimeters       &#61; optional&#40;string&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [iam](variables.tf#L152) | IAM bindings in {ROLE => [MEMBERS]} format. | <code>map&#40;list&#40;string&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [iam_bindings](variables.tf#L158) | Authoritative IAM bindings in {KEY => {role = ROLE, members = [], condition = {}}}. Keys are arbitrary. | <code title="map&#40;object&#40;&#123;&#10;  members &#61; list&#40;string&#41;&#10;  role    &#61; string&#10;  condition &#61; optional&#40;object&#40;&#123;&#10;    expression  &#61; string&#10;    title       &#61; string&#10;    description &#61; optional&#40;string&#41;&#10;  &#125;&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [iam_bindings_additive](variables.tf#L173) | Individual additive IAM bindings. Keys are arbitrary. | <code title="map&#40;object&#40;&#123;&#10;  member &#61; string&#10;  role   &#61; string&#10;  condition &#61; optional&#40;object&#40;&#123;&#10;    expression  &#61; string&#10;    title       &#61; string&#10;    description &#61; optional&#40;string&#41;&#10;  &#125;&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [ingress_policies](variables.tf#L188) | Ingress policy definitions that can be referenced in perimeters. | <code title="map&#40;object&#40;&#123;&#10;  title &#61; optional&#40;string&#41;&#10;  from &#61; object&#40;&#123;&#10;    access_levels &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    identity_type &#61; optional&#40;string&#41;&#10;    identities    &#61; optional&#40;list&#40;string&#41;&#41;&#10;    resources     &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#10;  to &#61; object&#40;&#123;&#10;    operations &#61; optional&#40;list&#40;object&#40;&#123;&#10;      method_selectors     &#61; optional&#40;list&#40;string&#41;&#41;&#10;      permission_selectors &#61; optional&#40;list&#40;string&#41;&#41;&#10;      service_name         &#61; string&#10;    &#125;&#41;&#41;, &#91;&#93;&#41;&#10;    resources &#61; optional&#40;list&#40;string&#41;&#41;&#10;    roles     &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [perimeters](variables.tf#L230) | Regular service perimeters. | <code title="map&#40;object&#40;&#123;&#10;  description               &#61; optional&#40;string&#41;&#10;  ignore_resource_changes   &#61; optional&#40;bool, false&#41;&#10;  title                     &#61; optional&#40;string&#41;&#10;  use_explicit_dry_run_spec &#61; optional&#40;bool, false&#41;&#10;  spec &#61; optional&#40;object&#40;&#123;&#10;    access_levels       &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    egress_policies     &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    ingress_policies    &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    restricted_services &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    resources           &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    vpc_accessible_services &#61; optional&#40;object&#40;&#123;&#10;      allowed_services   &#61; list&#40;string&#41;&#10;      enable_restriction &#61; optional&#40;bool, true&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;&#10;  status &#61; optional&#40;object&#40;&#123;&#10;    access_levels       &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    egress_policies     &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    ingress_policies    &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    resources           &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    restricted_services &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    vpc_accessible_services &#61; optional&#40;object&#40;&#123;&#10;      allowed_services   &#61; list&#40;string&#41;&#10;      enable_restriction &#61; optional&#40;bool, true&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [project_id_search_scope](variables.tf#L264) | Set this to an organization or folder ID to use Cloud Asset Inventory to automatically translate project ids to numbers. | <code>string</code> |  | <code>null</code> |
+| [access_policy](variables.tf#L117) | Access Policy name, set to null if creating one. | <code>string</code> | ✓ |  |
+| [access_levels](variables.tf#L17) | Access level definitions. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [access_policy_create](variables.tf#L122) | Access Policy configuration, fill in to create. Parent is in 'organizations/123456' format, scopes are in 'folders/456789' or 'projects/project_id' format. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [context](variables.tf#L132) | External context used in replacements. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [egress_policies](variables.tf#L150) | Egress policy definitions that can be referenced in perimeters. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [factories_config](variables.tf#L194) | Paths to folders that enable factory functionality. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [iam](variables.tf#L206) | IAM bindings in {ROLE => [MEMBERS]} format. | <code>map&#40;list&#40;string&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [iam_bindings](variables.tf#L212) | Authoritative IAM bindings in {KEY => {role = ROLE, members = [], condition = {}}}. Keys are arbitrary. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [iam_bindings_additive](variables.tf#L227) | Individual additive IAM bindings. Keys are arbitrary. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [ingress_policies](variables.tf#L242) | Ingress policy definitions that can be referenced in perimeters. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [perimeters](variables.tf#L285) | Regular service perimeters. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [project_id_search_scope](variables.tf#L319) | Set this to an organization or folder ID to use Cloud Asset Inventory to automatically translate project ids to numbers. | <code>string</code> |  | <code>null</code> |
 
 ## Outputs
 
@@ -451,10 +484,13 @@ module "test" {
   perimeters = {
     default = {
       status = {
-        access_levels    = ["geo-it"]
-        resources        = ["projects/1111"]
-        egress_policies  = ["factory-egress-policy"]
-        ingress_policies = ["variable-policy", "factory-ingress-policy"]
+        access_levels   = ["geo-it"]
+        resources       = ["projects/1111"]
+        egress_policies = ["$egress_policies:factory-egress-policy"]
+        ingress_policies = [
+          "$ingress_policies:variable-policy",
+          "$ingress_policies:factory-ingress-policy"
+        ]
       }
     }
   }

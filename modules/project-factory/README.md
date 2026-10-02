@@ -30,6 +30,7 @@ The code is meant to be executed by a high level service account with powerful p
 - [Projects](#projects)
   - [Factory-wide project defaults, merges, optionals](#factory-wide-project-defaults-merges-optionals)
   - [Project templates](#project-templates)
+    - [Context expansion for template-derived resources](#context-expansion-for-template-derived-resources)
   - [Service accounts and buckets](#service-accounts-and-buckets)
   - [Automation resources](#automation-resources)
     - [Prefix handling](#prefix-handling)
@@ -39,7 +40,9 @@ The code is meant to be executed by a high level service account with powerful p
   - [Folder context ids](#folder-context-ids)
   - [Project context ids](#project-context-ids)
   - [Service account context ids](#service-account-context-ids)
+  - [Log bucket context ids](#log-bucket-context-ids)
   - [Other context ids](#other-context-ids)
+- [Service agent grants outside the project](#service-agent-grants-outside-the-project)
 - [Example](#example)
 - [Files](#files)
 - [Variables](#variables)
@@ -49,7 +52,7 @@ The code is meant to be executed by a high level service account with powerful p
 
 ## Folder hierarchy
 
-The hierarchy supports up to three levels of folders, which are defined via filesystem directories each including a `.config.yaml` files detailing their attributes.
+The hierarchy supports up to four levels of folders, which are defined via filesystem directories each including a `.config.yaml` files detailing their attributes.
 
 The filesystem tree containing folder definitions is configured via the `factories_config.folders` variable, which sets the the path containing the YAML definitions for folders. It's also possible to configure the hierarchy via the `folders` variable, which is internally merged in with the factory definitions.
 
@@ -86,6 +89,10 @@ When referenced in a project configuration file, a template attributes are used 
 For example, declaring `iam` or `org_policies` in the template and then doing the same in the project file will result in those two attributes in the template being ignored.
 
 The set of available templates is defined via a dedicated path in the `factories_config` file, and then a template can be referenced from a project definition via the `project_template` YAML attribute.
+
+#### Context expansion for template-derived resources
+
+Using a template makes it hard or impossible to reference project-level resources that contain the project key in the context id, as for example `$iam_principals:service_accounts/my-project/rw`. In those cases, alternate context ids are provided of the form `$iam_principals:service_accounts/_self_/rw`. Those are only available within the scope of the project itself and are currently only supported for service accounts in the `$iam_principals` and `$service_account_ids` context namespaces.
 
 ### Service accounts and buckets
 
@@ -200,7 +207,6 @@ automation:
       description: Read-only automation sa for app example 0.
   bucket:
     # bucket name: foo-prod-app-example-0-tf-state
-    description: Terraform state bucket for app example 0.
     iam:
       roles/storage.objectCreator:
         - $iam_principals:service_accounts/iac-core-0/rw
@@ -257,7 +263,6 @@ automation:
       description: Read/write automation sa for team a app 0.
   buckets:
     state:
-      description: Terraform state bucket for team a app 0.
       iam:
         roles/storage.objectCreator:
           - $iam_principals:service_accounts/my-project/rw
@@ -275,14 +280,21 @@ Assuming keys of the form `my_folder`, `my_project`, `my_sa`, etc. this is an ex
 - `$folder_ids:my_folder`
 - `$iam_principals:my_principal`
 - `$iam_principals:service_accounts/my_project/my_sa`
+- `$iam_principals:service_agents/_self_/my_api` *only resolves for agents whose API is enabled in the project*
+- `$iam_principals:service_agents/my_project/my_api` *only resolves for agents whose API is enabled in the target project*
+- `$iam_principalsets:service_accounts/all`
 - `$kms_keys:my_key`
+- `$log_buckets:my_project/my_bucket`
 - `$locations:my_location`
 - `$notification_channels:my_channel`
 - `$project_ids:my_project`
 - `$service_account_ids:my_project/my_sa`
 - `$service_account_ids:my_project/automation/my_sa`
 - `$service_agents:compute`
-- `$tag_values:my_value`
+- `$tag_keys:my_key` *static context*
+- `$tag_keys:my_project/my_key` *project-level tag keys*
+- `$tag_values:my_key/my_value` *static context*
+- `$tag_values:my_project/my_key/my_value` *project-level tag values*
 - `$vpc_host_projects:my_project`
 - `$vpc_sc_perimeters:my_perimeter`
 
@@ -298,8 +310,8 @@ As an example, the id of the folder defined in `folders/networking/prod/.config.
 
 Project ids ise the `$project_ids:` namespace, with ids defined in two different ways:
 
-- projects defined in the `var.factories_config.project` tree use the filename (dirname is stripped)
-- projects defined in the `var.factories_config.folders` tree use the full path (dirname is kept)
+- projects defined in the `var.factories_config.paths.project` tree use the filename (dirname is stripped)
+- projects defined in the `var.factories_config.paths.folders` tree use the full path (dirname is kept)
 
 As an example, the id of the project defined in the `projects/team-0/app-0-0.yaml` file will be accessible via `$project_ids:app-0-0`. The id of the project defined in the `folders/shared/iac-core-0.yaml` file will be accessible via `$project_ids:shared/iac-core-0`.
 
@@ -339,6 +351,17 @@ service_accounts:
         - roles/iam.serviceAccountTokenCreator
 ```
 
+### Log bucket context ids
+
+Log buckets use the `$log_buckets:` namespace, with ids that allow referring to their parent project. As an example, the `audit-logs` log bucket defined in the `projects/team-0/log-0.yaml` file will be accessible via `$log_buckets:log-0/audit-logs`.
+
+```yaml
+# sink defined at the organization level
+logging_sinks:
+  audit-logs:
+    destination: $log_buckets:log-0/audit-logs
+```
+
 ### Other context ids
 
 Other context ids simply match whatever was passed in via the `var.contexts` variable. The following is a short example.
@@ -352,7 +375,7 @@ context = {
     "test/prod" = "folders/1234567890"
   }
   iam_principals = {
-    mysa    = "serviceAccount:test@test-project.iam.gserviceaccount.com"
+    mysa = "serviceAccount:test@test-project.iam.gserviceaccount.com"
   }
   project_ids = {
     vpc-host = "test-vpc-host"
@@ -380,6 +403,14 @@ vpc_sc:
   perimeter_name: $vpc_sc_perimeters:default
 ```
 
+## Service agent grants outside the project
+
+The `service_agents_project_bindings` and `service_agents_folder_bindings` project attributes grant a project's own service agents roles on projects and folders the project does not own. Their `service` attribute takes a service agent name or alias, while target and role are resolved through context.
+
+Where both the granting project and the target are managed by the same factory, using `iam_by_principals` in combination with the `$service_agents` context is the preferred way of accomplishing the same, as it defines IAM grants in the context of the resource they apply to instead of the other way round.
+
+Reach for the service agent grants attributes when the target lives outside the factory, for example a folder or a project owned by a preceding stage. Service agents are defined here and are not known on the resource side, so granting from this end avoids shuffling static values around between stages, in the form of fully qualified service agent emails.
+
 ## Example
 
 This show a module invocation using all optional features:
@@ -398,6 +429,15 @@ module "project-factory" {
     iam_principals = {
       gcp-devops = "group:gcp-devops@example.org"
     }
+    project_ids = {
+      feeds-project = "my-cai-feeds-project"
+    }
+    pubsub_topics = {
+      feeds-topic = "projects/my-cai-feeds-project/topics/feed"
+    }
+    storage_buckets = {
+      log-bucket = "log-bucket"
+    }
     tag_values = {
       "context/gke"                = "tagValues/654321"
       "org-policies/drs-allow-all" = "tagValues/123456"
@@ -408,8 +448,11 @@ module "project-factory" {
   }
   # use a default billing account if none is specified via yaml
   data_defaults = {
-    billing_account  = var.billing_account_id
-    storage_location = "EU"
+    billing_account = var.billing_account_id
+    locations = {
+      bigquery = "EU"
+      storage  = "EU"
+    }
   }
   # make sure the environment label and stackdriver service are always added
   data_merges = {
@@ -429,13 +472,13 @@ module "project-factory" {
   }
   # location where the yaml files are read from
   factories_config = {
+    basepath = "data"
     budgets = {
-      billing_account_id = var.billing_account_id
-      data               = "data/budgets"
+      billing_account = var.billing_account_id
     }
-    folders           = "data/hierarchy"
-    project_templates = "data/templates"
-    projects          = "data/projects"
+    exclusions = {
+      projects = ["staging/"]
+    }
   }
   notification_channels = {
     billing-default = {
@@ -447,7 +490,7 @@ module "project-factory" {
     }
   }
 }
-# tftest files=t0,0,1,2,3,4,5,6,7,8,9,10 inventory=example.yaml
+# tftest files=t0,0,1,2,2.1,2.2,2.3,3,4,5,6,7,8,9,10,99 inventory=example.yaml
 ```
 
 A project template for GKE projects:
@@ -464,7 +507,7 @@ service_encryption_key_ids:
     - $kms_keys:compute-prod-ew1
 tag_bindings:
   context: $tag_values:context/gke
-# tftest-file id=t0 path=data/templates/container/base.yaml schema=project.schema.json
+# tftest-file id=t0 path=data/project-templates/container/base.yaml schema=project.schema.json
 ```
 
 A simple hierarchy of folders:
@@ -476,28 +519,56 @@ iam:
   roles/viewer:
     - group:team-a-admins@example.org
     - $iam_principals:gcp-devops
-# tftest-file id=0 path=data/hierarchy/team-a/.config.yaml schema=folder.schema.json
+data_access_logs:
+  storage.googleapis.com:
+    DATA_READ:
+      exempted_members:
+        - $iam_principals:gcp-devops
+# tftest-file id=0 path=data/folders/team-a/.config.yaml schema=folder.schema.json
 ```
 
 ```yaml
 name: Team B
 # explicit parent definition via key
 parent: $folder_ids:teams
-# tftest-file id=1 path=data/hierarchy/team-b/.config.yaml schema=folder.schema.json
+# tftest-file id=1 path=data/folders/team-b/.config.yaml schema=folder.schema.json
 ```
 
 ```yaml
 name: Team C
 # explicit parent definition via folder id
 parent: folders/5678901234
-# tftest-file id=2 path=data/hierarchy/team-c/.config.yaml schema=folder.schema.json
+# tftest-file id=2 path=data/folders/team-c/.config.yaml schema=folder.schema.json
+```
+
+```yaml
+name: Apps
+# tftest-file id=2.1 path=data/folders/team-c/apps/.config.yaml schema=folder.schema.json
+```
+
+```yaml
+name: Test
+# tftest-file id=2.2 path=data/folders/team-c/apps/test/.config.yaml schema=folder.schema.json
+```
+
+```yaml
+name: App X
+asset_feeds:
+  compute-instances:
+    billing_project: $project_ids:feeds-project
+    feed_output_config:
+      pubsub_destination:
+        topic: $pubsub_topics:feeds-topic
+    content_type: RESOURCE
+    asset_types:
+      - compute.googleapis.com/Instance
+# tftest-file id=2.3 path=data/folders/team-c/apps/test/app-x/.config.yaml schema=folder.schema.json
 ```
 
 ```yaml
 name: App 0
 factories_config:
-  org_policies: data/factories/org-policies
-
+  org_policies: ./data/factories/org-policies
 pam_entitlements:
   app-0-admins:
     max_request_duration: 3600s
@@ -511,26 +582,53 @@ pam_entitlements:
     privileged_access:
       - role: roles/writer
 
-# tftest-file id=3 path=data/hierarchy/team-a/app-0/.config.yaml schema=folder.schema.json
+# tftest-file id=3 path=data/folders/team-a/app-0/.config.yaml schema=folder.schema.json
 ```
 
 ```yaml
 name: App 0
 tag_bindings:
   drs-allow-all: $tag_values:org-policies/drs-allow-all
-# tftest-file id=4 path=data/hierarchy/team-b/app-0/.config.yaml schema=folder.schema.json
+# tftest-file id=4 path=data/folders/team-b/app-0/.config.yaml schema=folder.schema.json
 ```
 
-One project defined within the folder hierarchy, using a lower level factory for org polcies:
+One project defined within the folder hierarchy, using a lower level factory for org policies:
 
 ```yaml
 billing_account: 012345-67890A-BCDEF0
 factories_config:
-  org_policies: data/factories/org-policies
+  org_policies: factories/org-policies
 services:
   - container.googleapis.com
   - storage.googleapis.com
-# tftest-file id=5 path=data/hierarchy/teams-iac-0.yaml schema=project.schema.json
+org_policies:
+  gcp.restrictCmekCryptoKeyProjects:
+    rules:
+      - allow:
+          values:
+            - under:${folder_ids.team-a}
+workload_identity_pools:
+  test-0:
+    display_name: Test pool.
+    providers:
+      github-test:
+        display_name: GitHub test provider.
+        attribute_condition: attribute.repository_owner=="my_org"
+        identity_provider:
+          oidc:
+            template: github
+
+# tftest-file id=5 path=data/folders/teams-iac-0.yaml schema=project.schema.json
+```
+
+A project definition ignored via `factories_config.exclusions.projects`.
+
+```yaml
+billing_account: 012345-67890A-BCDEF0
+services:
+  - container.googleapis.com
+  - storage.googleapis.com
+# tftest-file id=99 path=data/projects/staging/unused-0.yaml schema=project.schema.json
 ```
 
 More traditional project definitions via the project factory data:
@@ -544,8 +642,13 @@ labels:
  app: app-0
  team: team-a
 parent: $folder_ids:team-a/app-0
+dns_threat_detector:
+  enabled: true
 iam_by_principals:
   $iam_principals:service_accounts/dev-ta-app0-be/app-0-be:
+    - roles/storage.objectViewer
+  # alternate context lookup, mainly for project template use
+  $iam_principals:service_accounts/_self_/app-0-fe:
     - roles/storage.objectViewer
 iam:
   roles/cloudkms.cryptoKeyEncrypterDecrypter:
@@ -553,12 +656,29 @@ iam:
 service_accounts:
   app-0-be:
     display_name: "Backend instances."
+    # assign roles on different projects
     iam_project_roles:
       $project_ids:dev-spoke-0:
         - roles/compute.networkUser
+    # assign roles on this project projects
     iam_self_roles:
       - roles/logging.logWriter
       - roles/monitoring.metricWriter
+    tag_bindings:
+      context: $tag_values:context/project-factory
+    # assign roles on this service account
+    iam:
+      roles/iam.serviceAccountUser:
+        - $iam_principals:service_accounts/_self_/app-0-fe
+        - $iam_principals:service_agents/_self_/compute
+        - $iam_principals:service_agents/dev-tb-app0-0/storage
+    iam_bindings_additive:
+      test:
+        role: roles/iam.serviceAccountUser
+        member: group:team-a-admins@example.org
+    iam_sa_roles:
+      $service_account_ids:_self_/app-0-fe:
+        - roles/iam.serviceAccountUser
   app-0-fe:
     display_name: "Frontend instances."
     iam_project_roles:
@@ -578,6 +698,21 @@ shared_vpc_service_config:
       - $service_agents:container-engine
 billing_budgets:
   - $billing_budgets:test-100
+buckets:
+  app-0-bucket-a:
+    location: europe-west8
+    iam:
+      roles/storage.objectViewer:
+        - $iam_principals:service_agents/_self_/compute
+      roles/storage.legacyObjectReader:
+        - $iam_principals:service_agents/dev-tb-app0-0/storage
+    tag_bindings:
+      context: $tag_values:context/gke
+  app-0-bucket-b:
+    location: europe-west8
+    logging_config:
+      log_bucket: $storage_buckets:log-bucket
+      log_object_prefix: log-prefix
 pam_entitlements:
   project-admins:
     max_request_duration: 3600s
@@ -591,6 +726,35 @@ pam_entitlements:
     privileged_access:
       - role: roles/compute.admin
       - role: roles/bigquery.admin
+services:
+  - compute.googleapis.com
+  - container.googleapis.com
+  - pubsub.googleapis.com
+  - storage.googleapis.com
+datasets:
+  test_0:
+    friendly_name: Test Dataset
+    iam:
+      roles/bigquery.dataViewer:
+        - $iam_principals:gcp-devops
+pubsub_topics:
+  app-0-topic-a:
+    iam:
+      roles/pubsub.subscriber:
+        - group:team-a-admins@example.org
+      roles/pubsub.viewer:
+        - $iam_principals:service_agents/_self_/pubsub
+  app-0-topic-b:
+    subscriptions:
+      app-0-topic-b-sub: {}
+kms:
+  keyrings:
+    my-keyring:
+      location: europe-west1
+      keys:
+        my-key: {}
+      tag_bindings:
+        context: $tag_values:context/project-factory
 tags:
   my-tag-key-1:
     values:
@@ -616,6 +780,8 @@ iam:
     - $iam_principals:service_accounts/dev-tb-app0-0/automation/rw
   "roles/viewer":
     - $iam_principals:service_accounts/dev-tb-app0-0/automation/ro
+factories_config:
+  data_catalog_taxonomy: data/taxonomies/sample.yaml
 shared_vpc_host_config:
   enabled: true
 service_accounts:
@@ -627,6 +793,23 @@ service_accounts:
     iam:
       roles/iam.serviceAccountTokenCreator:
         - $iam_principals:service_accounts/dev-tb-app0-0/automation/rw
+    iam_project_bindings:
+      cond-0:
+        project_id: $project_ids:dev-tb-app0-0
+        role: roles/storage.objectViewer
+        condition:
+          expression: resource.name.startsWith('projects/test')
+          title: conditional-access
+data_access_logs:
+  storage.googleapis.com:
+    DATA_READ:
+      exempted_members:
+        - $iam_principals:gcp-devops
+service_agents_project_bindings:
+  run-object-viewer:
+    service: run
+    project: $project_ids:dev-ta-app0-be
+    role: roles/storage.objectViewer
 automation:
   project: test-pf-teams-iac-0
   # prefix used for automation resources can be explicitly set if needed
@@ -634,10 +817,12 @@ automation:
   service_accounts:
     rw:
       description: Team B app 0 read/write automation sa.
+      iam_sa_roles:
+        $service_account_ids:dev-tb-app0-0/automation/ro:
+          - roles/iam.serviceAccountTokenCreator
     ro:
       description: Team B app 0 read-only automation sa.
   bucket:
-    description: Team B app 0 Terraform state bucket.
     iam:
       roles/storage.objectCreator:
         - $iam_principals:service_accounts/dev-tb-app0-0/automation/rw
@@ -646,6 +831,9 @@ automation:
         - group:team-b-admins@example.org
         - $iam_principals:service_accounts/dev-tb-app0-0/automation/rw
         - $iam_principals:service_accounts/dev-tb-app0-0/automation/ro
+    logging_config:
+      log_bucket: $storage_buckets:log-bucket
+      log_object_prefix: log-prefix
 
 # tftest-file id=7 path=data/projects/dev-tb-app0-0.yaml schema=project.schema.json
 ```
@@ -678,17 +866,26 @@ Granting permissions to service accounts defined in other project through interp
 ```yaml
 billing_account: 012345-67890A-BCDEF0
 labels:
- app: app-0
- team: team-b
+  app: app-0
+  team: team-b
 parent: $folder_ids:team-b/app-0
 services:
   - container.googleapis.com
   - storage.googleapis.com
+custom_roles:
+  custom_role_0:
+    permissions:
+      - compute.instances.get
+      - compute.instances.list
+    title: "Custom role 0"
+    description: "Custom role 0 description."
 iam:
   "roles/run.admin":
     - $iam_principals:service_accounts/dev-ta-app0-be/app-0-be
   "roles/run.developer":
     - $iam_principals:service_accounts/dev-tb-app0-1/app-0-be
+  "$custom_roles:custom_role_0":
+    - group:team-b-admins@example.org
 service_accounts:
   app-0-be:
     display_name: "Backend instances."
@@ -713,6 +910,7 @@ compute.disableSerialPortAccess:
 
 | name | description | modules | resources |
 |---|---|---|---|
+| [aspect-types.tf](./aspect-types.tf) | Aspect types resources. | <code>dataplex-aspect-types</code> |  |
 | [automation.tf](./automation.tf) | None | <code>gcs</code> · <code>iam-service-account</code> |  |
 | [budgets.tf](./budgets.tf) | Billing budget factory locals. | <code>billing-account</code> |  |
 | [folders.tf](./folders.tf) | Folder hierarchy factory resources. | <code>folder</code> |  |
@@ -721,9 +919,13 @@ compute.disableSerialPortAccess:
 | [projects-bigquery.tf](./projects-bigquery.tf) | None | <code>bigquery-dataset</code> |  |
 | [projects-buckets.tf](./projects-buckets.tf) | None | <code>gcs</code> |  |
 | [projects-defaults.tf](./projects-defaults.tf) | None |  |  |
+| [projects-dns-armor.tf](./projects-dns-armor.tf) | None |  | <code>google_network_security_dns_threat_detector</code> |
+| [projects-kms.tf](./projects-kms.tf) | None | <code>kms</code> |  |
 | [projects-log-buckets.tf](./projects-log-buckets.tf) | None | <code>logging-bucket</code> |  |
+| [projects-pubsub.tf](./projects-pubsub.tf) | None | <code>pubsub</code> |  |
 | [projects-service-accounts.tf](./projects-service-accounts.tf) | None | <code>iam-service-account</code> |  |
-| [projects.tf](./projects.tf) | None | <code>project</code> |  |
+| [projects.tf](./projects.tf) | None | <code>project</code> | <code>terraform_data</code> |
+| [taxonomies.tf](./taxonomies.tf) | Taxonomy resources. | <code>data-catalog-policy-tag</code> |  |
 | [variables-billing.tf](./variables-billing.tf) | None |  |  |
 | [variables-folders.tf](./variables-folders.tf) | None |  |  |
 | [variables-projects.tf](./variables-projects.tf) | None |  |  |
@@ -733,30 +935,35 @@ compute.disableSerialPortAccess:
 
 | name | description | type | required | default |
 |---|---|:---:|:---:|:---:|
-| [factories_config](variables.tf#L163) | Path to folder with YAML resource description data files. | <code title="object&#40;&#123;&#10;  folders           &#61; optional&#40;string&#41;&#10;  project_templates &#61; optional&#40;string&#41;&#10;  projects          &#61; optional&#40;string&#41;&#10;  budgets &#61; optional&#40;object&#40;&#123;&#10;    billing_account_id &#61; string&#10;    data               &#61; string&#10;  &#125;&#41;&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
-| [context](variables.tf#L17) | Context-specific interpolations. | <code title="object&#40;&#123;&#10;  condition_vars        &#61; optional&#40;map&#40;map&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  custom_roles          &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  folder_ids            &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  iam_principals        &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  kms_keys              &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  locations             &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  notification_channels &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  project_ids           &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  tag_values            &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  vpc_host_projects     &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  vpc_sc_perimeters     &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [data_defaults](variables.tf#L36) | Optional default values used when corresponding project or folder data from files are missing. | <code title="object&#40;&#123;&#10;  billing_account &#61; optional&#40;string&#41;&#10;  bucket &#61; optional&#40;object&#40;&#123;&#10;    force_destroy &#61; optional&#40;bool&#41;&#10;  &#125;&#41;, &#123;&#125;&#41;&#10;  contacts        &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  deletion_policy &#61; optional&#40;string&#41;&#10;  labels          &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  logging_data_access &#61; optional&#40;map&#40;object&#40;&#123;&#10;    ADMIN_READ &#61; optional&#40;object&#40;&#123; exempted_members &#61; optional&#40;list&#40;string&#41;&#41; &#125;&#41;&#41;,&#10;    DATA_READ  &#61; optional&#40;object&#40;&#123; exempted_members &#61; optional&#40;list&#40;string&#41;&#41; &#125;&#41;&#41;,&#10;    DATA_WRITE &#61; optional&#40;object&#40;&#123; exempted_members &#61; optional&#40;list&#40;string&#41;&#41; &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  metric_scopes &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  parent        &#61; optional&#40;string&#41;&#10;  prefix        &#61; optional&#40;string&#41;&#10;  project_reuse &#61; optional&#40;object&#40;&#123;&#10;    use_data_source &#61; optional&#40;bool, true&#41;&#10;    attributes &#61; optional&#40;object&#40;&#123;&#10;      name             &#61; string&#10;      number           &#61; number&#10;      services_enabled &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;&#10;  service_accounts &#61; optional&#40;map&#40;object&#40;&#123;&#10;    display_name   &#61; optional&#40;string, &#34;Terraform-managed.&#34;&#41;&#10;    iam_self_roles &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  service_encryption_key_ids &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  services                   &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  shared_vpc_service_config &#61; optional&#40;object&#40;&#123;&#10;    host_project &#61; string&#10;    iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;      member &#61; string&#10;      role   &#61; string&#10;      condition &#61; optional&#40;object&#40;&#123;&#10;        expression  &#61; string&#10;        title       &#61; string&#10;        description &#61; optional&#40;string&#41;&#10;      &#125;&#41;&#41;&#10;    &#125;&#41;&#41;, &#123;&#125;&#41;&#10;    network_users            &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    service_agent_iam        &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;    service_agent_subnet_iam &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;    service_iam_grants       &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    network_subnet_users     &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;&#10;  storage_location &#61; optional&#40;string&#41;&#10;  tag_bindings     &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  universe &#61; optional&#40;object&#40;&#123;&#10;    prefix                         &#61; string&#10;    forced_jit_service_identities  &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    unavailable_service_identities &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    unavailable_services           &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#41;&#10;  vpc_sc &#61; optional&#40;object&#40;&#123;&#10;    perimeter_name &#61; string&#10;    is_dry_run     &#61; optional&#40;bool, false&#41;&#10;  &#125;&#41;&#41;&#10;  bigquery_location &#61; optional&#40;string&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [data_merges](variables.tf#L103) | Optional values that will be merged with corresponding data from files. Combines with `data_defaults`, file data, and `data_overrides`. | <code title="object&#40;&#123;&#10;  contacts                   &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  labels                     &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  metric_scopes              &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  service_encryption_key_ids &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  services                   &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  tag_bindings               &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  service_accounts &#61; optional&#40;map&#40;object&#40;&#123;&#10;    display_name   &#61; optional&#40;string, &#34;Terraform-managed.&#34;&#41;&#10;    iam_self_roles &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [data_overrides](variables.tf#L122) | Optional values that override corresponding data from files. Takes precedence over file data and `data_defaults`. | <code title="object&#40;&#123;&#10;  billing_account &#61; optional&#40;string&#41;&#10;  bucket &#61; optional&#40;object&#40;&#123;&#10;    force_destroy &#61; optional&#40;bool&#41;&#10;  &#125;&#41;, &#123;&#125;&#41;&#10;  contacts        &#61; optional&#40;map&#40;list&#40;string&#41;&#41;&#41;&#10;  deletion_policy &#61; optional&#40;string&#41;&#10;  logging_data_access &#61; optional&#40;map&#40;object&#40;&#123;&#10;    ADMIN_READ &#61; optional&#40;object&#40;&#123; exempted_members &#61; optional&#40;list&#40;string&#41;&#41; &#125;&#41;&#41;,&#10;    DATA_READ  &#61; optional&#40;object&#40;&#123; exempted_members &#61; optional&#40;list&#40;string&#41;&#41; &#125;&#41;&#41;,&#10;    DATA_WRITE &#61; optional&#40;object&#40;&#123; exempted_members &#61; optional&#40;list&#40;string&#41;&#41; &#125;&#41;&#41;&#10;  &#125;&#41;&#41;&#41;&#10;  parent &#61; optional&#40;string&#41;&#10;  prefix &#61; optional&#40;string&#41;&#10;  service_accounts &#61; optional&#40;map&#40;object&#40;&#123;&#10;    display_name   &#61; optional&#40;string, &#34;Terraform-managed.&#34;&#41;&#10;    iam_self_roles &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;&#41;&#10;  service_encryption_key_ids &#61; optional&#40;map&#40;list&#40;string&#41;&#41;&#41;&#10;  services                   &#61; optional&#40;list&#40;string&#41;&#41;&#10;  storage_location           &#61; optional&#40;string&#41;&#10;  tag_bindings               &#61; optional&#40;map&#40;string&#41;&#41;&#10;  universe &#61; optional&#40;object&#40;&#123;&#10;    prefix                         &#61; string&#10;    forced_jit_service_identities  &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    unavailable_service_identities &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    unavailable_services           &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#41;&#10;  vpc_sc &#61; optional&#40;object&#40;&#123;&#10;    perimeter_name &#61; string&#10;    is_dry_run     &#61; optional&#40;bool, false&#41;&#10;  &#125;&#41;&#41;&#10;  bigquery_location &#61; optional&#40;string&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [folders](variables-folders.tf#L17) | Folders data merged with factory data. | <code title="map&#40;object&#40;&#123;&#10;  name   &#61; optional&#40;string&#41;&#10;  parent &#61; optional&#40;string&#41;&#10;  iam    &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;    members &#61; list&#40;string&#41;&#10;    role    &#61; string&#10;    condition &#61; optional&#40;object&#40;&#123;&#10;      expression  &#61; string&#10;      title       &#61; string&#10;      description &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;    member &#61; string&#10;    role   &#61; string&#10;    condition &#61; optional&#40;object&#40;&#123;&#10;      expression  &#61; string&#10;      title       &#61; string&#10;      description &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  iam_by_principals &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  pam_entitlements &#61; optional&#40;map&#40;object&#40;&#123;&#10;    max_request_duration &#61; string&#10;    eligible_users       &#61; list&#40;string&#41;&#10;    privileged_access &#61; list&#40;object&#40;&#123;&#10;      role      &#61; string&#10;      condition &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;&#10;    requester_justification_config &#61; optional&#40;object&#40;&#123;&#10;      not_mandatory &#61; optional&#40;bool, true&#41;&#10;      unstructured  &#61; optional&#40;bool, false&#41;&#10;    &#125;&#41;, &#123; not_mandatory &#61; false, unstructured &#61; true &#125;&#41;&#10;    manual_approvals &#61; optional&#40;object&#40;&#123;&#10;      require_approver_justification &#61; bool&#10;      steps &#61; list&#40;object&#40;&#123;&#10;        approvers                &#61; list&#40;string&#41;&#10;        approvals_needed         &#61; optional&#40;number, 1&#41;&#10;        aprover_email_recipients &#61; optional&#40;list&#40;string&#41;&#41;&#10;      &#125;&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    additional_notification_targets &#61; optional&#40;object&#40;&#123;&#10;      admin_email_recipients     &#61; optional&#40;list&#40;string&#41;&#41;&#10;      requester_email_recipients &#61; optional&#40;list&#40;string&#41;&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  tag_bindings &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [notification_channels](variables-billing.tf#L17) | Notification channels used by budget alerts. | <code title="map&#40;object&#40;&#123;&#10;  project_id   &#61; string&#10;  type         &#61; string&#10;  description  &#61; optional&#40;string&#41;&#10;  display_name &#61; optional&#40;string&#41;&#10;  enabled      &#61; optional&#40;bool, true&#41;&#10;  force_delete &#61; optional&#40;bool&#41;&#10;  labels       &#61; optional&#40;map&#40;string&#41;&#41;&#10;  sensitive_labels &#61; optional&#40;list&#40;object&#40;&#123;&#10;    auth_token  &#61; optional&#40;string&#41;&#10;    password    &#61; optional&#40;string&#41;&#10;    service_key &#61; optional&#40;string&#41;&#10;  &#125;&#41;&#41;&#41;&#10;  user_labels &#61; optional&#40;map&#40;string&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [projects](variables-projects.tf#L17) | Projects data merged with factory data. | <code title="map&#40;object&#40;&#123;&#10;  automation &#61; optional&#40;object&#40;&#123;&#10;    project &#61; string&#10;    bucket &#61; optional&#40;object&#40;&#123;&#10;      location                    &#61; string&#10;      description                 &#61; optional&#40;string&#41;&#10;      force_destroy               &#61; optional&#40;bool&#41;&#10;      prefix                      &#61; optional&#40;string&#41;&#10;      storage_class               &#61; optional&#40;string, &#34;STANDARD&#34;&#41;&#10;      uniform_bucket_level_access &#61; optional&#40;bool, true&#41;&#10;      versioning                  &#61; optional&#40;bool&#41;&#10;      iam                         &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;        members &#61; list&#40;string&#41;&#10;        role    &#61; string&#10;        condition &#61; optional&#40;object&#40;&#123;&#10;          expression  &#61; string&#10;          title       &#61; string&#10;          description &#61; optional&#40;string&#41;&#10;        &#125;&#41;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;      iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;        member &#61; string&#10;        role   &#61; string&#10;        condition &#61; optional&#40;object&#40;&#123;&#10;          expression  &#61; string&#10;          title       &#61; string&#10;          description &#61; optional&#40;string&#41;&#10;        &#125;&#41;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;      labels &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;      managed_folders &#61; optional&#40;map&#40;object&#40;&#123;&#10;        force_destroy &#61; optional&#40;bool&#41;&#10;        iam           &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;        iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;          members &#61; list&#40;string&#41;&#10;          role    &#61; string&#10;          condition &#61; optional&#40;object&#40;&#123;&#10;            expression  &#61; string&#10;            title       &#61; string&#10;            description &#61; optional&#40;string&#41;&#10;          &#125;&#41;&#41;&#10;        &#125;&#41;&#41;, &#123;&#125;&#41;&#10;        iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;          member &#61; string&#10;          role   &#61; string&#10;          condition &#61; optional&#40;object&#40;&#123;&#10;            expression  &#61; string&#10;            title       &#61; string&#10;            description &#61; optional&#40;string&#41;&#10;          &#125;&#41;&#41;&#10;        &#125;&#41;&#41;, &#123;&#125;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;    &#125;&#41;&#41;&#10;    service_accounts &#61; optional&#40;map&#40;object&#40;&#123;&#10;      description &#61; optional&#40;string&#41;&#10;      iam         &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;        members &#61; list&#40;string&#41;&#10;        role    &#61; string&#10;        condition &#61; optional&#40;object&#40;&#123;&#10;          expression  &#61; string&#10;          title       &#61; string&#10;          description &#61; optional&#40;string&#41;&#10;        &#125;&#41;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;      iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;        member &#61; string&#10;        role   &#61; string&#10;        condition &#61; optional&#40;object&#40;&#123;&#10;          expression  &#61; string&#10;          title       &#61; string&#10;          description &#61; optional&#40;string&#41;&#10;        &#125;&#41;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;      iam_billing_roles      &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_folder_roles       &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_organization_roles &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_project_roles      &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_sa_roles           &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_storage_roles      &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;    &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;&#10;  billing_account &#61; optional&#40;string&#41;&#10;  billing_budgets &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  buckets &#61; optional&#40;map&#40;object&#40;&#123;&#10;    location                    &#61; string&#10;    description                 &#61; optional&#40;string&#41;&#10;    force_destroy               &#61; optional&#40;bool&#41;&#10;    prefix                      &#61; optional&#40;string&#41;&#10;    storage_class               &#61; optional&#40;string, &#34;STANDARD&#34;&#41;&#10;    uniform_bucket_level_access &#61; optional&#40;bool, true&#41;&#10;    versioning                  &#61; optional&#40;bool&#41;&#10;    iam                         &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;    iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;      members &#61; list&#40;string&#41;&#10;      role    &#61; string&#10;      condition &#61; optional&#40;object&#40;&#123;&#10;        expression  &#61; string&#10;        title       &#61; string&#10;        description &#61; optional&#40;string&#41;&#10;      &#125;&#41;&#41;&#10;    &#125;&#41;&#41;, &#123;&#125;&#41;&#10;    iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;      member &#61; string&#10;      role   &#61; string&#10;      condition &#61; optional&#40;object&#40;&#123;&#10;        expression  &#61; string&#10;        title       &#61; string&#10;        description &#61; optional&#40;string&#41;&#10;      &#125;&#41;&#41;&#10;    &#125;&#41;&#41;, &#123;&#125;&#41;&#10;    labels &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;    managed_folders &#61; optional&#40;map&#40;object&#40;&#123;&#10;      force_destroy &#61; optional&#40;bool&#41;&#10;      iam           &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;      iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;        members &#61; list&#40;string&#41;&#10;        role    &#61; string&#10;        condition &#61; optional&#40;object&#40;&#123;&#10;          expression  &#61; string&#10;          title       &#61; string&#10;          description &#61; optional&#40;string&#41;&#10;        &#125;&#41;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;      iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;        member &#61; string&#10;        role   &#61; string&#10;        condition &#61; optional&#40;object&#40;&#123;&#10;          expression  &#61; string&#10;          title       &#61; string&#10;          description &#61; optional&#40;string&#41;&#10;        &#125;&#41;&#41;&#10;      &#125;&#41;&#41;, &#123;&#125;&#41;&#10;    &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  contacts &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  iam      &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  iam_bindings &#61; optional&#40;map&#40;object&#40;&#123;&#10;    members &#61; list&#40;string&#41;&#10;    role    &#61; string&#10;    condition &#61; optional&#40;object&#40;&#123;&#10;      expression  &#61; string&#10;      title       &#61; string&#10;      description &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  iam_bindings_additive &#61; optional&#40;map&#40;object&#40;&#123;&#10;    member &#61; string&#10;    role   &#61; string&#10;    condition &#61; optional&#40;object&#40;&#123;&#10;      expression  &#61; string&#10;      title       &#61; string&#10;      description &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  iam_by_principals &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  labels            &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  metric_scopes     &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  pam_entitlements &#61; optional&#40;map&#40;object&#40;&#123;&#10;    max_request_duration &#61; string&#10;    eligible_users       &#61; list&#40;string&#41;&#10;    privileged_access &#61; list&#40;object&#40;&#123;&#10;      role      &#61; string&#10;      condition &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;&#10;    requester_justification_config &#61; optional&#40;object&#40;&#123;&#10;      not_mandatory &#61; optional&#40;bool, true&#41;&#10;      unstructured  &#61; optional&#40;bool, false&#41;&#10;    &#125;&#41;, &#123; not_mandatory &#61; false, unstructured &#61; true &#125;&#41;&#10;    manual_approvals &#61; optional&#40;object&#40;&#123;&#10;      require_approver_justification &#61; bool&#10;      steps &#61; list&#40;object&#40;&#123;&#10;        approvers                &#61; list&#40;string&#41;&#10;        approvals_needed         &#61; optional&#40;number, 1&#41;&#10;        aprover_email_recipients &#61; optional&#40;list&#40;string&#41;&#41;&#10;      &#125;&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    additional_notification_targets &#61; optional&#40;object&#40;&#123;&#10;      admin_email_recipients     &#61; optional&#40;list&#40;string&#41;&#41;&#10;      requester_email_recipients &#61; optional&#40;list&#40;string&#41;&#41;&#10;    &#125;&#41;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  name &#61; optional&#40;string&#41;&#10;  org_policies &#61; optional&#40;map&#40;object&#40;&#123;&#10;    inherit_from_parent &#61; optional&#40;bool&#41; &#35; for list policies only.&#10;    reset               &#61; optional&#40;bool&#41;&#10;    rules &#61; optional&#40;list&#40;object&#40;&#123;&#10;      allow &#61; optional&#40;object&#40;&#123;&#10;        all    &#61; optional&#40;bool&#41;&#10;        values &#61; optional&#40;list&#40;string&#41;&#41;&#10;      &#125;&#41;&#41;&#10;      deny &#61; optional&#40;object&#40;&#123;&#10;        all    &#61; optional&#40;bool&#41;&#10;        values &#61; optional&#40;list&#40;string&#41;&#41;&#10;      &#125;&#41;&#41;&#10;      enforce &#61; optional&#40;bool&#41; &#35; for boolean policies only.&#10;      condition &#61; optional&#40;object&#40;&#123;&#10;        description &#61; optional&#40;string&#41;&#10;        expression  &#61; optional&#40;string&#41;&#10;        location    &#61; optional&#40;string&#41;&#10;        title       &#61; optional&#40;string&#41;&#10;      &#125;&#41;, &#123;&#125;&#41;&#10;      parameters &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  parent &#61; optional&#40;string&#41;&#10;  prefix &#61; optional&#40;string&#41;&#10;  service_accounts &#61; optional&#40;map&#40;object&#40;&#123;&#10;    display_name      &#61; optional&#40;string&#41;&#10;    iam_self_roles    &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    iam_project_roles &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;, &#123;&#125;&#41;&#10;  service_encryption_key_ids &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  services                   &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  shared_vpc_host_config &#61; optional&#40;object&#40;&#123;&#10;    enabled          &#61; bool&#10;    service_projects &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#41;&#10;  shared_vpc_service_config &#61; optional&#40;object&#40;&#123;&#10;    host_project             &#61; string&#10;    network_users            &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    service_agent_iam        &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;    service_agent_subnet_iam &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;    service_iam_grants       &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    network_subnet_users     &#61; optional&#40;map&#40;list&#40;string&#41;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;&#10;  tag_bindings &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  universe &#61; optional&#40;object&#40;&#123;&#10;    prefix                         &#61; string&#10;    unavailable_services           &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;    unavailable_service_identities &#61; optional&#40;list&#40;string&#41;, &#91;&#93;&#41;&#10;  &#125;&#41;&#41;&#10;  vpc_sc &#61; optional&#40;object&#40;&#123;&#10;    perimeter_name &#61; string&#10;    is_dry_run     &#61; optional&#40;bool, false&#41;&#10;  &#125;&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [factories_config](variables.tf#L200) | Path to folder with YAML resource description data files. Exclusions match the start of file paths, relative to their containing folder. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [context](variables.tf#L17) | Context-specific interpolations. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [data_defaults](variables.tf#L47) | Optional default values used when corresponding project or folder data from files are missing. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [data_merges](variables.tf#L130) | Optional values that will be merged with corresponding data from files. Combines with `data_defaults`, file data, and `data_overrides`. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [data_overrides](variables.tf#L149) | Optional values that override corresponding data from files. Takes precedence over file data and `data_defaults`. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [folders](variables-folders.tf#L17) | Folders data merged with factory data. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [notification_channels](variables-billing.tf#L17) | Notification channels used by budget alerts. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [projects](variables-projects.tf#L17) | Projects data merged with factory data. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
 
 ## Outputs
 
 | name | description | sensitive |
 |---|---|:---:|
-| [folder_ids](outputs.tf#L78) | Folder ids. |  |
-| [iam_principals](outputs.tf#L83) | IAM principals mappings. |  |
-| [log_buckets](outputs.tf#L88) | Log bucket ids. |  |
-| [project_ids](outputs.tf#L95) | Project ids. |  |
-| [project_numbers](outputs.tf#L100) | Project numbers. |  |
-| [projects](outputs.tf#L107) | Project attributes. |  |
-| [service_account_emails](outputs.tf#L112) | Service account emails. |  |
-| [service_account_iam_emails](outputs.tf#L119) | Service account IAM-format emails. |  |
-| [service_account_ids](outputs.tf#L126) | Service account IDs. |  |
-| [service_accounts](outputs.tf#L133) | Service account emails. |  |
-| [storage_buckets](outputs.tf#L138) | Bucket names. |  |
+| [bigquery_datasets](outputs.tf#L119) | BigQuery dataset ids. |  |
+| [custom_roles](outputs.tf#L126) | Custom role ids. |  |
+| [folder_ids](outputs.tf#L133) | Folder ids. |  |
+| [iam_principals](outputs.tf#L138) | IAM principals mappings. |  |
+| [kms_keys](outputs.tf#L143) | KMS key ids. |  |
+| [log_buckets](outputs.tf#L148) | Log bucket ids. |  |
+| [project_ids](outputs.tf#L155) | Project ids. |  |
+| [project_numbers](outputs.tf#L160) | Project numbers. |  |
+| [projects](outputs.tf#L167) | Project attributes. |  |
+| [pubsub_topics](outputs.tf#L172) | PubSub topic ids. |  |
+| [service_account_emails](outputs.tf#L179) | Service account emails. |  |
+| [service_account_iam_emails](outputs.tf#L186) | Service account IAM-format emails. |  |
+| [service_account_ids](outputs.tf#L193) | Service account IDs. |  |
+| [service_accounts](outputs.tf#L200) | Service account emails. |  |
+| [service_agents](outputs.tf#L205) | Service agent emails. |  |
+| [storage_buckets](outputs.tf#L216) | Bucket names. |  |
 <!-- END TFDOC -->
 ## Tests
 
@@ -765,9 +972,28 @@ These tests validate fixes to the project factory.
 ```hcl
 module "project-factory" {
   source = "./fabric/modules/project-factory"
+  context = {
+    condition_vars = {
+      organization = {
+        id = 1234567890
+      }
+    }
+    iam_principals = {
+      tag-test = "user:user1@example.com"
+    }
+    tag_keys = {
+      "context" = "tagKeys/1234567890"
+    }
+    tag_values = {
+      "context/project-factory" = "tagValues/1234567890"
+    }
+  }
   data_defaults = {
-    billing_account  = "012345-67890A-ABCDEF"
-    storage_location = "eu"
+    billing_account = "012345-67890A-ABCDEF"
+    locations = {
+      storage = "eu"
+    }
+    prefix = "foo"
   }
   data_merges = {
     labels = {
@@ -777,37 +1003,139 @@ module "project-factory" {
       "compute.googleapis.com"
     ]
   }
-  data_overrides = {
-    prefix = "foo"
-  }
   factories_config = {
-    projects = "data/projects"
+    basepath = "data"
   }
 }
-# tftest modules=4 resources=23 files=test-0,test-1,test-2
+# tftest modules=16 resources=49 files=test-0,test-1,test-2 inventory=test-1.yaml
 ```
 
 ```yaml
 parent: folders/1234567890
+# prefix from defaults (foo)
 services:
   - iam.googleapis.com
   - contactcenteraiplatform.googleapis.com
   - container.googleapis.com
+iam_bindings_additive:
+  test_context:
+    role: roles/viewer
+    member: user:user1@example.com
+    condition:
+      title: Test context
+      expression: resource.matchTag('${organization.id}/context', 'project-factory')
+tags:
+  context:
+    description: Test org-level tag value shadowing.
+    values:
+      project-factory:
+        description: Test value.
+        iam:
+          roles/resourcemanager.tagUser:
+            - $iam_principals:tag-test
+            - $iam_principals:service_accounts/test-1/tag-test
+service_accounts:
+  tag-test:
+    tag_bindings:
+      project-level: $tag_values:test-0/context/project-factory
+automation:
+  project: test-0
+  service_accounts:
+    auto-tag-test:
+      tag_bindings:
+        project-level: $tag_values:test-0/context/project-factory
+# test forwarding of the full gcs bucket attribute surface
+buckets:
+  attrs-test:
+    autoclass: false
+    default_event_based_hold: true
+    enable_hierarchical_namespace: false
+    public_access_prevention: enforced
+    requester_pays: true
+    # rpo is only accepted on dual-region buckets
+    location: EU
+    custom_placement_config:
+      - europe-west1
+      - europe-west4
+    rpo: DEFAULT
+    cors:
+      origin:
+        - https://example.com
+      method:
+        - GET
+      response_header:
+        - Content-Type
+      max_age_seconds: 3600
+    ip_filter:
+      allow_all_service_agent_access: true
+      public_network_sources:
+        - 192.0.2.0/24
+    notification_config:
+      enabled: true
+      payload_format: JSON_API_V1
+      sa_email: service-1234567890@gs-project-accounts.iam.gserviceaccount.com
+      topic_name: attrs-test-notifications
+    website:
+      main_page_suffix: index.html
+      not_found_page: 404.html
+# test forwarding of the full logging-bucket attribute surface
+log_buckets:
+  audit-logs:
+    description: Test log bucket description.
+    locked: false
+    retention: 365
+    tag_bindings:
+      project-level: $tag_values:test-0/context/project-factory
+    views:
+      audit-view:
+        description: Test log view.
+        filter: 'LOG_ID("cloudaudit.googleapis.com/activity")'
+        iam:
+          roles/logging.viewAccessor:
+            - $iam_principals:tag-test
 # tftest-file id=test-0 path=data/projects/test-0.yaml
 ```
 
 ```yaml
 parent: folders/1234567890
+descriptive_name: "Test Project 1"
+# null prefix
+prefix: null
 services:
   - iam.googleapis.com
   - contactcenteraiplatform.googleapis.com
+service_accounts:
+  tag-test: {}
+tag_bindings:
+  org-level: $tag_values:context/project-factory
+  project-level: $tag_values:test-0/context/project-factory
 # tftest-file id=test-1 path=data/projects/test-1.yaml
 ```
 
 ```yaml
 parent: folders/1234567890
+# explicit prefix
+prefix: bar
 services:
   - iam.googleapis.com
   - storage.googleapis.com
+service_accounts:
+  # service account IAM is applied in a second pass, so bindings declared via
+  # iam_bindings/iam_bindings_additive alone also need to trigger it
+  bindings-only:
+    iam_bindings:
+      token-creator:
+        role: roles/iam.serviceAccountTokenCreator
+        members:
+          - user:user1@example.com
+  bindings-additive-only:
+    iam_bindings_additive:
+      key-admin:
+        role: roles/iam.serviceAccountKeyAdmin
+        member: user:user1@example.com
+      # cross-service account reference, only resolvable in the second pass
+      token-creator:
+        role: roles/iam.serviceAccountTokenCreator
+        member: $iam_principals:service_accounts/_self_/bindings-only
 # tftest-file id=test-2 path=data/projects/test-2.yaml
 ```

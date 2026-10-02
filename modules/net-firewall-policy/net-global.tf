@@ -1,5 +1,5 @@
 /**
- * Copyright 2024 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,24 +14,39 @@
  * limitations under the License.
  */
 
-resource "google_compute_network_firewall_policy" "net-global" {
+moved {
+  from = google_compute_network_firewall_policy.net-global
+  to   = google_compute_network_firewall_policy.net_global
+}
+
+resource "google_compute_network_firewall_policy" "net_global" {
   count       = !local.use_hierarchical && !local.use_regional ? 1 : 0
   project     = lookup(local.ctx.project_ids, var.parent_id, var.parent_id)
   name        = var.name
   description = var.description
 }
 
-resource "google_compute_network_firewall_policy_association" "net-global" {
+moved {
+  from = google_compute_network_firewall_policy_association.net-global
+  to   = google_compute_network_firewall_policy_association.net_global
+}
+
+resource "google_compute_network_firewall_policy_association" "net_global" {
   for_each = (
     !local.use_hierarchical && !local.use_regional ? var.attachments : {}
   )
   project           = lookup(local.ctx.project_ids, var.parent_id, var.parent_id)
   name              = "${var.name}-${each.key}"
   attachment_target = lookup(local.ctx.networks, each.value, each.value)
-  firewall_policy   = google_compute_network_firewall_policy.net-global[0].name
+  firewall_policy   = google_compute_network_firewall_policy.net_global[0].name
 }
 
-resource "google_compute_network_firewall_policy_rule" "net-global" {
+moved {
+  from = google_compute_network_firewall_policy_rule.net-global
+  to   = google_compute_network_firewall_policy_rule.net_global
+}
+
+resource "google_compute_network_firewall_policy_rule" "net_global" {
   # Terraform's type system barfs in the condition if we use the locals map
   for_each = toset(
     !local.use_hierarchical && !local.use_regional
@@ -39,7 +54,7 @@ resource "google_compute_network_firewall_policy_rule" "net-global" {
     : []
   )
   project         = lookup(local.ctx.project_ids, var.parent_id, var.parent_id)
-  firewall_policy = google_compute_network_firewall_policy.net-global[0].name
+  firewall_policy = google_compute_network_firewall_policy.net_global[0].name
   rule_name       = local.rules[each.key].name
   action          = local.rules[each.key].action
   description     = local.rules[each.key].description
@@ -138,6 +153,79 @@ resource "google_compute_network_firewall_policy_rule" "net-global" {
       local.rules[each.key].target_tags == null
       ? []
       : local.rules[each.key].target_tags
+    )
+    content {
+      name = lookup(
+        local.ctx.tag_values, target_secure_tags.value, target_secure_tags.value
+      )
+    }
+  }
+}
+
+moved {
+  from = google_compute_network_firewall_policy_packet_mirroring_rule.net-global
+  to   = google_compute_network_firewall_policy_packet_mirroring_rule.net_global
+}
+
+resource "google_compute_network_firewall_policy_packet_mirroring_rule" "net_global" {
+  provider = google-beta
+  for_each = toset(
+    !local.use_hierarchical && !local.use_regional
+    ? keys(local.mirroring_rules)
+    : []
+  )
+  project         = lookup(local.ctx.project_ids, var.parent_id, var.parent_id)
+  firewall_policy = google_compute_network_firewall_policy.net_global[0].name
+  rule_name       = local.mirroring_rules[each.key].name
+  action          = local.mirroring_rules[each.key].action
+  description     = local.mirroring_rules[each.key].description
+  direction       = local.mirroring_rules[each.key].direction
+  disabled        = local.mirroring_rules[each.key].disabled
+  priority        = local.mirroring_rules[each.key].priority
+  tls_inspect     = local.mirroring_rules[each.key].tls_inspect
+
+  security_profile_group = try(
+    var.security_profile_group_ids[local.mirroring_rules[each.key].security_profile_group],
+    local.mirroring_rules[each.key].security_profile_group
+  )
+
+  match {
+    dest_ip_ranges = (
+      local.mirroring_rules[each.key].match.destination_ranges == null
+      ? null
+      : distinct(flatten([
+        for r in local.mirroring_rules[each.key].match.destination_ranges : try(
+          local.ctx.cidr_ranges_sets[r],
+          local.ctx.cidr_ranges[r],
+          r
+        )
+      ]))
+    )
+    src_ip_ranges = (
+      local.mirroring_rules[each.key].match.source_ranges == null
+      ? null
+      : distinct(flatten([
+        for r in local.mirroring_rules[each.key].match.source_ranges : try(
+          local.ctx.cidr_ranges_sets[r],
+          local.ctx.cidr_ranges[r],
+          r
+        )
+      ]))
+    )
+    dynamic "layer4_configs" {
+      for_each = local.mirroring_rules[each.key].match.layer4_configs
+      content {
+        ip_protocol = layer4_configs.value.protocol
+        ports       = layer4_configs.value.ports
+      }
+    }
+
+  }
+  dynamic "target_secure_tags" {
+    for_each = toset(
+      local.mirroring_rules[each.key].target_tags == null
+      ? []
+      : local.mirroring_rules[each.key].target_tags
     )
     content {
       name = lookup(

@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# yaml-language-server: $schema=../../../../../modules/vpc-sc/schemas/perimeters.schema.json
+# yaml-language-server: $schema=../../../../../modules/vpc-sc/schemas/perimeter.schema.json
 
 ignore_resource_changes: true
 use_explicit_dry_run_spec: true
 status:
   access_levels:
-    - test-context
+    - $access_levels:test-context
   egress_policies:
-    - test-context
+    - $egress_policies:test-context
   ingress_policies:
-    - test-context
+    - $ingress_policies:test-context
   restricted_services:
     - $service_sets:test
   resources:
     - $project_numbers:test-0
     - $project_numbers:test-1
+    - $folder_ids:test
     - $resource_sets:test

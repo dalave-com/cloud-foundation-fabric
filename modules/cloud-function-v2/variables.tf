@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -105,6 +105,24 @@ variable "description" {
   default     = "Terraform managed."
 }
 
+variable "direct_vpc_egress" {
+  description = "Direct VPC egress configuration."
+  type = object({
+    mode       = string
+    network    = string
+    subnetwork = string
+    tags       = optional(list(string))
+  })
+  default = null
+  validation {
+    condition = var.direct_vpc_egress == null || contains(
+      ["VPC_EGRESS_ALL_TRAFFIC", "VPC_EGRESS_PRIVATE_RANGES_ONLY"],
+      try(var.direct_vpc_egress.mode, "")
+    )
+    error_message = "Direct VPC egress mode must be one of VPC_EGRESS_ALL_TRAFFIC, VPC_EGRESS_PRIVATE_RANGES_ONLY."
+  }
+}
+
 variable "docker_repository_id" {
   description = "User managed repository created in Artifact Registry."
   type        = string
@@ -122,21 +140,26 @@ variable "environment_variables" {
 variable "function_config" {
   description = "Cloud function configuration. Defaults to using main as entrypoint, 1 instance with 256MiB of memory, and 180 second timeout."
   type = object({
-    binary_authorization_policy = optional(string)
-    entry_point                 = optional(string, "main")
-    instance_count              = optional(number, 1)
-    memory_mb                   = optional(number, 256) # Memory in MB
-    cpu                         = optional(string, "0.166")
-    runtime                     = optional(string, "python310")
-    timeout_seconds             = optional(number, 180)
+    automatic_update_policy          = optional(bool)
+    binary_authorization_policy      = optional(string)
+    cpu                              = optional(string, "0.166")
+    entry_point                      = optional(string, "main")
+    instance_count                   = optional(number, 1)
+    max_instance_request_concurrency = optional(number)
+    min_instance_count               = optional(number, 0)
+    memory_mb                        = optional(number, 256) # Memory in MB
+    on_deploy_update_policy          = optional(bool)
+    runtime                          = optional(string, "python310")
+    timeout_seconds                  = optional(number, 180)
   })
-  default = {
-    entry_point     = "main"
-    instance_count  = 1
-    memory_mb       = 256
-    cpu             = "0.166"
-    runtime         = "python310"
-    timeout_seconds = 180
+  default  = {}
+  nullable = false
+  validation {
+    condition = !(
+      coalesce(var.function_config.automatic_update_policy, false) &&
+      coalesce(var.function_config.on_deploy_update_policy, false)
+    )
+    error_message = "Cannot set both automatic_update_policy and on_deploy_update_policy to true."
   }
 }
 
@@ -217,4 +240,14 @@ variable "trigger_config" {
     retry_policy           = optional(string, "RETRY_POLICY_DO_NOT_RETRY") # default to avoid permadiff
   })
   default = null
+}
+
+variable "vpc_connector" {
+  description = "VPC connector configuration. Set create to 'true' if a new connector needs to be created."
+  type = object({
+    name            = optional(string)
+    egress_settings = optional(string)
+  })
+  nullable = false
+  default  = {}
 }

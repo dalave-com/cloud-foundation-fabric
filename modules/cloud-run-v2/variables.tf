@@ -14,6 +14,16 @@
  * limitations under the License.
  */
 
+variable "binary_authorization" {
+  description = "Binary Authorization configuration."
+  type = object({
+    breakglass_justification = optional(string)
+    policy                   = optional(string)
+    use_default              = optional(bool)
+  })
+  default = null
+}
+
 variable "containers" {
   description = "Containers in name => attributes format."
   type = map(object({
@@ -92,6 +102,28 @@ variable "containers" {
     ])
     error_message = "depends_on is not supported when type is WORKERPOOL."
   }
+}
+
+variable "context" {
+  description = "Context-specific interpolations."
+  type = object({
+    condition_vars = optional(map(map(string)), {}) # not needed here?
+    cidr_ranges    = optional(map(string), {})
+    custom_roles   = optional(map(string), {})
+    iam_principals = optional(map(string), {})
+    kms_keys       = optional(map(string), {})
+    locations      = optional(map(string), {})
+    networks       = optional(map(string), {})
+    project_ids    = optional(map(string), {})
+    subnets        = optional(map(string), {})
+    tag_values     = optional(map(string), {})
+    tag_vars = optional(object({
+      projects     = optional(map(map(string)), {})
+      organization = optional(map(string), {})
+    }), {})
+  })
+  nullable = false
+  default  = {}
 }
 
 variable "deletion_protection" {
@@ -231,24 +263,19 @@ variable "revision" {
     )
     error_message = "When providing vpc_access.network provide also vpc_access.subnet."
   }
-}
-
-variable "service_account" {
-  description = "Service account email. Unused if service account is auto-created."
-  type        = string
-  default     = null
-}
-
-variable "service_account_create" {
-  description = "Auto-create service account."
-  type        = bool
-  default     = false
+  validation {
+    condition = try(var.revision.vpc_access.connector, null) == null || (
+      try(var.revision.vpc_access.connector, null) != null && var.vpc_connector_create == null
+    )
+    error_message = "Either provide connector to create in var.vpc_connector_create or provide externally managed connector in var.revision.vpc_access.connector"
+  }
 }
 
 variable "service_config" {
   description = "Cloud Run service specific configuration options."
   type = object({
-    custom_audiences = optional(list(string), null)
+    custom_audiences     = optional(list(string), null)
+    default_uri_disabled = optional(bool)
     eventarc_triggers = optional(
       object({
         audit_log = optional(map(object({
@@ -270,11 +297,25 @@ variable "service_config" {
     ingress              = optional(string, null)
     invoker_iam_disabled = optional(bool, false)
     max_concurrency      = optional(number)
+    multi_region_settings = optional(object({
+      regions = list(string)
+    }), null)
     scaling = optional(object({
       max_instance_count = optional(number)
       min_instance_count = optional(number)
     }))
     timeout = optional(string)
+    traffic = optional(list(object({
+      percent  = optional(number)
+      revision = optional(string)
+      tag      = optional(string)
+      type     = optional(string)
+    })))
+    workload_identity_config = optional(object({
+      certificate_enabled = optional(bool)
+      identity            = optional(string)
+      identity_type       = optional(string)
+    }), null)
   })
   default  = {}
   nullable = false
@@ -304,6 +345,61 @@ variable "service_config" {
     Ingress should be one of INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY,
     INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER.
     EOF
+  }
+
+  validation {
+    condition = var.service_config.traffic == null ? true : alltrue([
+      for t in var.service_config.traffic :
+      t.type == null ? true : contains([
+        "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+        "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+      ], t.type)
+    ])
+    error_message = "Traffic type should be one of TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST, TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION."
+  }
+
+  validation {
+    condition = var.service_config.traffic == null ? true : alltrue([
+      for t in var.service_config.traffic :
+      t.percent == null ? true : (t.percent >= 0 && t.percent <= 100)
+    ])
+    error_message = "Traffic percent must be between 0 and 100."
+  }
+
+  validation {
+    condition = var.service_config.traffic == null ? true : alltrue([
+      for t in var.service_config.traffic :
+      t.tag == null ? true : (length(t.tag) >= 3 && length(t.tag) <= 47)
+    ])
+    error_message = "Traffic tag length must be between 3 and 47 characters."
+  }
+
+  validation {
+    condition = (
+      try(var.service_config.workload_identity_config.identity_type, null) == null
+      ? true : contains([
+        "IDENTITY_TYPE_SERVICE_ACCOUNT", "IDENTITY_TYPE_WORKLOAD_IDENTITY",
+      "IDENTITY_TYPE_AGENT_IDENTITY"], var.service_config.workload_identity_config.identity_type)
+    )
+    error_message = <<EOF
+    Identity type should be one of IDENTITY_TYPE_SERVICE_ACCOUNT,
+    IDENTITY_TYPE_WORKLOAD_IDENTITY, IDENTITY_TYPE_AGENT_IDENTITY.
+    EOF
+  }
+
+  validation {
+    condition = (
+      var.service_config.workload_identity_config == null || var.type == "SERVICE"
+    )
+    error_message = "Field workload_identity_config is only supported when type is SERVICE."
+  }
+
+  validation {
+    condition = (
+      try(var.service_config.workload_identity_config.identity_type, "IDENTITY_TYPE_SERVICE_ACCOUNT") == "IDENTITY_TYPE_SERVICE_ACCOUNT"
+      || var.service_account_config.email == null
+    )
+    error_message = "Field service_account_config.email cannot be set when identity type is not IDENTITY_TYPE_SERVICE_ACCOUNT."
   }
 }
 

@@ -34,7 +34,12 @@ module "factory" {
   )
   data_overrides = local.project_defaults.overrides
   context = merge(local.ctx, {
-    condition_vars = local.ctx_condition_vars
+    condition_vars = merge(local.ctx_condition_vars, {
+      custom_roles = merge(
+        try(local.ctx.condition_vars.custom_roles, {}),
+        module.organization[0].custom_role_id
+      )
+    })
     custom_roles = merge(
       local.ctx.custom_roles,
       module.organization[0].custom_role_id
@@ -45,15 +50,48 @@ module "factory" {
         default = try(module.organization[0].id, null)
       }
     )
-    iam_principals = local.iam_principals
+    # no null filter here: values are non-null by construction, and filtering
+    # on them would make this map unknown at plan time (cf. organization.tf)
+    iam_principals = merge(
+      {
+        for k, v in local.org_logging_identities :
+        k => "serviceAccount:${v}"
+      },
+      local.iam_principals
+    )
+    tag_keys = merge(
+      local.ctx.tag_keys,
+      local.org_tag_keys
+    )
     tag_values = merge(
       local.ctx.tag_values,
       local.org_tag_values
     )
+    tag_vars = merge(local.ctx.tag_vars, {
+      organization = merge(
+        try(local.ctx.tag_vars.organization, {}),
+        local.org_tag_vars
+      )
+    })
   })
   factories_config = {
-    folders           = var.factories_config.folders
-    project_templates = var.factories_config.project_templates
-    projects          = var.factories_config.projects
+    basepath = var.factories_config.dataset
+    budgets  = local.factory_billing
+    paths    = var.factories_config.paths
+  }
+}
+
+module "vpcs" {
+  source = "../../../modules/net-vpc-factory"
+  context = merge(local.ctx, {
+    project_ids = local.of_ctx.project_ids
+  })
+  data_defaults  = local.vpc_defaults.defaults
+  data_overrides = local.vpc_defaults.overrides
+  factories_config = {
+    basepath = var.factories_config.dataset
+    paths = {
+      vpcs = var.factories_config.paths.vpcs
+    }
   }
 }

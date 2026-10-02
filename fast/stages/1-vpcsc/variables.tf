@@ -73,10 +73,15 @@ variable "access_policy" {
 variable "context" {
   description = "External context used in replacements."
   type = object({
-    identity_sets   = optional(map(list(string)), {})
-    project_numbers = optional(map(number), {})
-    resource_sets   = optional(map(list(string)), {})
-    service_sets    = optional(map(list(string)), {})
+    folder_ids       = optional(map(string), {})
+    iam_principals   = optional(map(string), {})
+    identity_sets    = optional(map(list(string)), {})
+    organization_ids = optional(map(string), {})
+    project_numbers  = optional(map(number), {})
+    psc_endpoints    = optional(map(string), {})
+    resource_sets    = optional(map(list(string)), {})
+    service_sets     = optional(map(list(string)), {})
+    storage_buckets  = optional(map(string), {})
   })
   default  = {}
   nullable = false
@@ -90,6 +95,7 @@ variable "egress_policies" {
       access_levels = optional(list(string), [])
       identity_type = optional(string)
       identities    = optional(list(string))
+      psc_endpoints = optional(list(string), [])
       resources     = optional(list(string), [])
     })
     to = object({
@@ -128,11 +134,15 @@ variable "egress_policies" {
 variable "factories_config" {
   description = "Paths to folders that enable factory functionality."
   type = object({
-    access_levels       = optional(string, "data/access-levels")
-    egress_policies     = optional(string, "data/egress-policies")
-    ingress_policies    = optional(string, "data/ingress-policies")
-    perimeters          = optional(string, "data/perimeters")
-    restricted_services = optional(string, "data/restricted-services.yaml")
+    dataset = optional(string, "datasets/classic")
+    paths = optional(object({
+      access_levels       = optional(string, "access-levels")
+      defaults            = optional(string, "defaults.yaml")
+      egress_policies     = optional(string, "egress-policies")
+      ingress_policies    = optional(string, "ingress-policies")
+      perimeters          = optional(string, "perimeters")
+      restricted_services = optional(string, "restricted-services.yaml")
+    }), {})
   })
   nullable = false
   default  = {}
@@ -146,6 +156,7 @@ variable "ingress_policies" {
       access_levels = optional(list(string), [])
       identity_type = optional(string)
       identities    = optional(list(string))
+      psc_endpoints = optional(list(string), [])
       resources     = optional(list(string), [])
     })
     to = object({
@@ -178,12 +189,6 @@ variable "ingress_policies" {
     ])
     error_message = "Invalid `from.identity`. It needs to start with on of the prefixes: 'serviceAccount:', 'user:', 'group:', 'principal:', 'principalSet:'."
   }
-}
-
-variable "outputs_location" {
-  description = "Path where providers, tfvars files, and lists for the following stages are written. Leave empty to disable."
-  type        = string
-  default     = null
 }
 
 variable "perimeters" {

@@ -15,16 +15,13 @@
  */
 
 locals {
-  _keyrings_path = try(
-    pathexpand(var.factories_config.keyrings), null
-  )
   _keyrings_files = try(
-    fileset(local._keyrings_path, "**/*.yaml"),
+    fileset(local.paths.keyrings, "**/*.yaml"),
     []
   )
   _keyrings = {
     for f in local._keyrings_files : trimsuffix(basename(f), ".yaml") => yamldecode(file(
-      "${coalesce(local._keyrings_path, "-")}/${f}"
+      "${coalesce(local.paths.keyrings, "-")}/${f}"
     ))
   }
   keyrings = {
@@ -74,8 +71,8 @@ module "kms" {
   keys                  = each.value.keys
   tag_bindings          = each.value.tag_bindings
   context = merge(local.ctx, {
-    project_ids = merge(local.ctx.project_ids, module.factory.project_ids)
+    project_ids    = merge(local.ctx.project_ids, module.factory.project_ids)
+    iam_principals = merge(local.ctx.iam_principals, module.factory.iam_principals)
   })
   depends_on = [module.factory]
 }
-
